@@ -8,11 +8,13 @@
   <title>Bus Station 3 · Arcade</title>
   <link rel="icon" href="assets/bus-mark.svg" type="image/svg+xml">
   <link rel="preload" href="assets/col-des-pins.webp" as="image">
-  <link rel="stylesheet" href="style.css?v=7">
+  <link rel="stylesheet" href="style.css?v=8">
+  <link rel="stylesheet" href="heart-meter.css">
   <script src="assets/vendor/number-flow-0.6.2.js" defer></script>
   <script src="drive.js?v=7" defer></script>
   <script src="world.js?v=5" defer></script>
-  <script src="arcade.js?v=7" defer></script>
+  <script src="heart-meter.js" defer></script>
+  <script src="arcade.js?v=8" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -48,28 +50,25 @@
           <div class="track-tag"><i data-icon="pin"></i> Col des Pins</div>
         </div>
         <canvas id="road" hidden aria-label="Route en 3D. Maintiens les flèches gauche et droite pour diriger le bus."></canvas>
-        <div class="run-info" id="run-info" hidden>
-          <div class="condition" aria-label="État du bus"><i data-icon="heart"></i><span id="health" class="health"></span></div>
-          <div id="engine" class="engine" aria-label="Régime moteur"></div>
-          <div id="active-effect" class="effect" hidden></div>
-        </div>
         <div class="corner-actions">
           <button id="pause" class="glass-icon" aria-label="Mettre en pause" title="Pause (P)" hidden><i data-icon="pause"></i></button>
           <button id="expand" class="glass-icon" aria-label="Plein écran" title="Plein écran"><i data-icon="expand"></i></button>
+          <div id="active-effect" class="effect" hidden></div>
         </div>
         <div id="notice" class="notice" aria-hidden="true"></div>
         <div id="notice-status" class="notice-status" role="status" aria-atomic="true"></div>
+      </div>
+      <div class="dashboard" aria-label="Tableau de bord">
+        <div class="gauge score"><span class="gauge-icon"><i data-icon="star"></i></span><div><span class="gauge-label">Score</span><div class="reading"><strong><number-flow id="score">0</number-flow></strong><small>pts</small></div></div></div>
+        <div class="gauge distance"><span class="gauge-icon"><i data-icon="road"></i></span><div><span class="gauge-label">Distance</span><div class="reading"><strong><number-flow id="distance">0</number-flow></strong><small>m</small></div></div></div>
+        <div id="health" class="heart-meter" hidden></div>
+        <div class="gauge lap"><span class="gauge-icon"><i data-icon="flag"></i></span><div><span class="gauge-label">Tour</span><div class="reading"><strong><number-flow id="lap">01</number-flow></strong></div></div></div>
+        <div class="gauge speed"><span class="gauge-icon"><i data-icon="gauge"></i></span><div><span class="gauge-label">Vitesse</span><div class="reading"><strong><number-flow id="speed">0</number-flow></strong><small>km/h</small></div></div><div class="tach" id="tach" role="img" aria-label="Moteur au repos"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div>
         <div id="touch-controls" class="touch-controls" hidden>
           <button id="left" aria-label="Braquer à gauche"><i data-icon="left"></i></button>
           <button id="brake" aria-label="Freiner"><i data-icon="brake"></i></button>
           <button id="right" aria-label="Braquer à droite"><i data-icon="right"></i></button>
         </div>
-      </div>
-      <div class="dashboard" aria-label="Tableau de bord">
-        <div class="gauge score"><span class="gauge-icon"><i data-icon="star"></i></span><div><span class="gauge-label">Score</span><div class="reading"><strong><number-flow id="score">0</number-flow></strong><small>pts</small></div></div></div>
-        <div class="gauge distance"><span class="gauge-icon"><i data-icon="road"></i></span><div><span class="gauge-label">Distance</span><div class="reading"><strong><number-flow id="distance">0</number-flow></strong><small>m</small></div></div></div>
-        <div class="gauge lap"><span class="gauge-icon"><i data-icon="flag"></i></span><div><span class="gauge-label">Tour</span><div class="reading"><strong><number-flow id="lap">01</number-flow></strong></div></div></div>
-        <div class="gauge speed"><span class="gauge-icon"><i data-icon="gauge"></i></span><div><span class="gauge-label">Vitesse</span><div class="reading"><strong><number-flow id="speed">0</number-flow></strong><small>km/h</small></div></div><div class="tach" id="tach" role="img" aria-label="Moteur au repos"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div>
       </div>
     </section>
     <div class="info-grid">

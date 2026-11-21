@@ -16,7 +16,6 @@
     flag: '<path d="M4.5 21V4m0 1c5.5-4 9 3.5 15-.5v10c-6 4-9.5-3.5-15 .5"/><path d="M9.6 4.7V9l5 1V5.8m-10 4 5-.8v5.3m5-4.3 4.9-.7" stroke-width="1.4"/>',
     gauge: '<path d="M4.2 18a9.5 9.5 0 1 1 15.6 0M12 5.5v2M5.3 10l2 1m11.4-1-2 1m-4.5 4.5 3-4"/><circle cx="12" cy="16" r="1.3"/>',
     sign: '<path d="M11.5 2.5V5m0 5v2m0 6v3.5M4 5h12.5l3 2.5-3 2.5H4zM20 13H7l-3 2.5L7 18h13z"/>',
-    heart: '<path d="M20.7 5.7c-2-2-5.3-1.8-7.3.3L12 7.5 10.6 6c-2-2.1-5.3-2.3-7.3-.3-2.1 2.1-1.7 5.3.4 7.6L12 21l8.3-7.7c2.1-2.3 2.5-5.5.4-7.6Z"/>',
     left: '<path d="M20 12H4m6-6-6 6 6 6"/>',
     right: '<path d="M4 12h16m-6-6 6 6-6 6"/>',
     brake: '<rect x="5" y="4" width="14" height="16" rx="4"/><path d="M9 8v8m6-8v8"/>',
@@ -32,11 +31,13 @@
   const number = new Intl.NumberFormat('fr-FR');
   const cabinet = $('cabinet'), modal = $('modal'), title = $('modal-title'), body = $('modal-body');
   const road = $('road'), notice = $('notice'), effect = $('active-effect');
+  const health = $('health');
+  const hearts = window.BusHearts.create(health);
   const noticeStatus = $('notice-status');
   const impactTitles = {cone: 'Oups !', barrier: 'Boum !', oil: 'Ça glisse !', pothole: 'Crevé !'};
   const pendingNotices = [];
   let pendingDodge = null;
-  const gauges = Object.fromEntries(['score','distance','lap','speed','tach','health'].map(key => [key, $(key)]));
+  const gauges = Object.fromEntries(['score','distance','lap','speed'].map(key => [key, $(key)]));
   const lapNumber = new Intl.NumberFormat('fr-FR', {minimumIntegerDigits: 2});
   for (const dial of document.querySelectorAll('.reading number-flow')) {
     if (typeof dial.update !== 'function') continue;
@@ -50,7 +51,7 @@
   }
   const rankingPrefix = 'busstation3.result.';
   const memoryScores = new Map();
-  let renderer, view = 'home', panel = '', scoreId = '', scoreSaved = false, lastHud = -1, lastHealth = -1;
+  let renderer, view = 'home', panel = '', scoreId = '', scoreSaved = false, lastHud = -1;
   const heldControls = new Map();
   let drag = null;
   let graphicsLost = false;
@@ -112,18 +113,6 @@
     setDial(gauges.distance, Math.floor(state.distance), rolling);
     setDial(gauges.lap, state.lap, rolling);
     setDial(gauges.speed, Math.round(state.speed), rolling);
-    const rpm = state.rpm || 0;
-    const bars = Math.round(Math.min(1,rpm / 4600) * 7);
-    Array.from(gauges.tach.children).forEach((bar, index) => bar.classList.toggle('lit',index < bars));
-    const rpmText = number.format(Math.round(rpm / 50) * 50) + ' tr/min';
-    if (state.gear) setText($('engine'), rpmText);
-    gauges.tach.title = rpmText;
-    gauges.tach.setAttribute('aria-label',rpmText);
-    if (lastHealth !== state.health) {
-      gauges.health.innerHTML = [1,2,3].map(n => '<b class="' + (n > state.health ? 'empty' : '') + '"></b>').join('');
-      gauges.health.parentElement.setAttribute('aria-label','État du bus, ' + state.health + ' sur 3');
-      lastHealth = state.health;
-    }
     const effectLabel = state.slip ? 'Glissade' : state.boost ? 'Turbo' : state.flat ? 'Pneu crevé' : '';
     effect.hidden = !effectLabel;
     setText(effect,effectLabel);
@@ -170,7 +159,8 @@
     notice.replaceChildren();
     noticeStatus.replaceChildren();
   }
-  function event(feedback) {
+  function event(feedback, state) {
+    hearts.set(state.health);
     if (!notice.firstElementChild || (notice.dataset.type === 'dodge' && feedback.type !== 'dodge')) {
       showNotice(feedback);
     } else if (feedback.type === 'dodge') {
@@ -185,7 +175,8 @@
     document.body.classList.toggle('in-race', active);
     $('attract').hidden = active;
     road.hidden = !active;
-    $('run-info').hidden = !active;
+    health.hidden = !active;
+    if (active) hearts.set(3, false);
     $('pause').hidden = !active;
     $('touch-controls').hidden = !active;
     clearNotices();
@@ -218,7 +209,7 @@
   }
   function openDialog(kind, symbol, heading, html, reveal = false) {
     releaseControls();
-    notice.classList.add('is-paused');
+    cabinet.classList.add('is-paused');
     modal.classList.toggle('finish-reveal', reveal);
     panel = kind;
     title.toggleAttribute('autofocus', kind === 'finish');
@@ -242,7 +233,7 @@
     if (!focus.hidden) focus.focus({preventScroll:true});
   }
   function closeDialog() {
-    notice.classList.remove('is-paused');
+    cabinet.classList.remove('is-paused');
     panel = '';
     if (modal.open) modal.close();
     $('scores-tab').classList.remove('selected');

@@ -1,0 +1,80 @@
+.heart-slot {
+  display:block;
+  flex:none;
+  width:var(--heart-size,48px);
+  height:auto;
+  overflow:visible;
+  pointer-events:none;
+}
+
+.heart-slot .heart-shard,
+.heart-slot .heart-spark,
+.heart-slot[data-full="false"] .heart-whole {
+  display:none;
+}
+
+.heart-slot[data-motion="break"] .heart-shard {
+  display:inline;
+  transform-box:view-box;
+  transform-origin:50% 54%;
+  animation:heart-shatter-left 690ms ease-in both;
+}
+.heart-slot[data-motion="break"] .heart-shard-right {
+  animation-name:heart-shatter-right;
+}
+
+@keyframes heart-shatter-left {
+  0%   { opacity:1; transform:translate(0,0) rotate(0); }
+  18%  { transform:translate(-2px,-2px) rotate(-5deg); }
+  43%  { opacity:1; transform:translate(-7px,-4px) rotate(-19deg); }
+  100% { opacity:0; transform:translate(-12px,11px) rotate(-37deg) scale(.82); }
+}
+@keyframes heart-shatter-right {
+  0%   { opacity:1; transform:translate(0,0) rotate(0); }
+  18%  { transform:translate(2px,-1px) rotate(5deg); }
+  43%  { opacity:1; transform:translate(7px,-3px) rotate(16deg); }
+  100% { opacity:0; transform:translate(13px,12px) rotate(36deg) scale(.82); }
+}
+
+.heart-slot[data-motion="fill"] .heart-liquid {
+  animation:heart-fill-rise 470ms cubic-bezier(.35,.08,.34,1) both;
+}
+.heart-slot[data-motion="fill"] .heart-whole {
+  transform-box:view-box;
+  transform-origin:50% 74%;
+  animation:heart-gain-bounce 690ms ease-out both;
+}
+.heart-slot[data-motion="fill"] .heart-spark {
+  display:inline;
+  transform-box:fill-box;
+  transform-origin:center;
+  animation:heart-glint 640ms ease-out both;
+}
+
+@keyframes heart-fill-rise {
+  from { transform:translateY(60px); }
+  to   { transform:translateY(0); }
+}
+@keyframes heart-gain-bounce {
+  0%,49% { transform:scale(1); }
+  69%    { transform:scale(1.13) rotate(-5deg); }
+  86%    { transform:scale(.97) rotate(2deg); }
+  100%   { transform:scale(1); }
+}
+@keyframes heart-glint {
+  0%,45% { opacity:0; transform:scale(.35) rotate(-18deg); }
+  70%    { opacity:1; transform:scale(1.15); }
+  100%   { opacity:0; transform:translate(1px,-3px) scale(.8) rotate(15deg); }
+}
+
+.is-paused .heart-slot[data-motion] * {
+  animation-play-state:paused;
+}
+
+@media (prefers-reduced-motion:reduce) {
+  .heart-slot[data-motion] :is(.heart-liquid,.heart-whole,.heart-shard,.heart-spark) {
+    animation:none;
+  }
+  .heart-slot[data-motion] .heart-shard,
+  .heart-slot[data-motion] .heart-spark { display:none; }
+}
