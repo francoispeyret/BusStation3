@@ -24,13 +24,14 @@
 
   function makeSound() {
     const engineUrl = 'assets/bus-engine.wav';
+    const engineLevel = 0.5;
     const fullScaleGain = 0.45;
     let masterGain = fullScaleGain * 0.6;
     let ctx, master, motor, engineGain, engineBuffer, media;
     let loading = false;
     let stopTimer;
     let pitch = 1;
-    let volume = 0.65;
+    let volume = engineLevel * 0.65;
     let previousSampleTime = 0;
     let previousSpeed = 0;
     let enabled = true;
@@ -161,7 +162,7 @@
         // adds a short growl as the bus accelerates, especially under turbo.
         const targetPitch = clamp(0.84 + (state.rpm - 2500) * 0.00018
           + (state.speed - 35) * 0.0025 + load * 0.10 + boost * 0.18 - overrun * 0.04, 0.76, 1.70);
-        const targetVolume = 0.65 + load * 0.15 + boost * 0.13 - (state.braking ? 0.15 : 0);
+        const targetVolume = engineLevel * (0.65 + load * 0.15 + boost * 0.13 - (state.braking ? 0.15 : 0));
         const smoothing = dt > 0 ? 1 - Math.exp(-dt / 0.10) : 1;
         pitch += (targetPitch - pitch) * smoothing;
         volume += (targetVolume - volume) * smoothing;
