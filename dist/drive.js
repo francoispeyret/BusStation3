@@ -15,6 +15,7 @@
     pothole: [1.12, 0.97], boost: [0.57, 0.20], repair: [0.56, 0.32]
   };
   const HAZARDS = ['cone', 'barrier', 'oil', 'pothole'];
+  const IMPACT_DURATIONS = { cone: 0.95, barrier: 0.76, oil: 0.68, repair: 0.85, boost: 0.50 };
   const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
   const choose = items => items[Math.floor(Math.random() * items.length)];
   const isPickup = type => type === 'repair' || type === 'boost';
@@ -192,7 +193,7 @@
     return {
       status: 'ready', distance: 0, roadZ: 0, speed: 48, time: 0, laneX: 0,
       worldHeading: Math.atan(roadSlope(0)), heading: 0, steer: 0,
-      objects: [], boost: 0, slip: 0, flat: false, hit: 0, score: 0, lap: 1,
+      objects: [], impacts: [], boost: 0, slip: 0, flat: false, hit: 0, score: 0, lap: 1,
       lapProgress: 0, health: 3, gear: 3, rpm: 2200, braking: false
     };
   }
@@ -209,6 +210,7 @@
     let nextAudio = 0;
     let steeringInput = 0;
     let slideDirection = 1;
+    let finishAt = 0;
 
     function emit(type, message) {
       audio.effect(type);
@@ -268,20 +270,38 @@
         emit(type, 'Ça glisse !');
         return;
       }
+      if (type === 'cone') {
+        state.speed *= 0.75;
+        emit(type, 'Cône renversé · Bus ralenti');
+        return;
+      }
       state.health = Math.max(0, state.health - 1);
       state.boost = 0;
-      state.hit = 0.65;
       if (type === 'pothole') state.flat = true;
+      else state.hit = 0.65;
       state.speed = Math.max(28, state.speed * (type === 'barrier' ? 0.52 : 0.68));
-      const message = type === 'pothole' ? 'Pneu crevé !' : type === 'cone' ? 'Cône percuté !' : 'Choc sur la barrière !';
+      const message = type === 'pothole' ? 'Pneu crevé !' : 'Choc sur la barrière !';
       emit(type, message);
+      if (state.health === 0) {
+        finishAt = state.time + (IMPACT_DURATIONS[type] || 0);
+        state.braking = false;
+        audio.setDriving(false);
+      }
+    }
+
+    function advanceClock(dt) {
+      state.time += dt;
+      state.hit = Math.max(0, state.hit - dt);
+      for (let i = state.impacts.length - 1; i >= 0; i--) {
+        const impact = state.impacts[i];
+        if (state.time >= impact.start + impact.duration) state.impacts.splice(i, 1);
+      }
     }
 
     function advance(dt) {
-      state.time += dt;
+      advanceClock(dt);
       state.boost = Math.max(0, state.boost - dt);
       state.slip = Math.max(0, state.slip - dt);
-      state.hit = Math.max(0, state.hit - dt);
 
       const cruise = Math.min(114, 78 + state.distance * 0.012);
       let target = (state.flat ? cruise * 0.70 : cruise) + (state.boost ? 39 : 0);
@@ -331,12 +351,13 @@
       const busX = roadX(state.roadZ) + state.laneX * LANE_WIDTH;
       for (const object of state.objects) {
         object.z -= travel;
-        if (object.passed || object.z > 4.5) continue;
+        if (object.passed || object.z > 4.5 || state.health === 0) continue;
         // Test the road object's rectangle against the rotated bus on all four axes.
         // This lets a cone clear a corner even when the bus straddles a line.
         const objectZ = state.roadZ + object.z;
         const objectAngle = Math.atan(roadSlope(objectZ));
-        const offsetX = roadX(objectZ) + object.lane * LANE_WIDTH - busX;
+        const objectX = roadX(objectZ) + object.lane * LANE_WIDTH;
+        const offsetX = objectX - busX;
         const cosRoad = Math.cos(objectAngle), sinRoad = Math.sin(objectAngle);
         const dx = offsetX * cosRoad - object.z * sinRoad;
         const dz = offsetX * sinRoad + object.z * cosRoad;
@@ -349,7 +370,15 @@
           && Math.abs(dx * sin + dz * cos) <= BUS_HALF_LENGTH + width * absSin + length * cos;
         if (touched) {
           object.passed = true;
-          object.collected = true;
+          object.collected = object.type !== 'pothole';
+          const duration = IMPACT_DURATIONS[object.type];
+          if (duration) {
+            const side = Math.sign(object.lane) || Math.sign(dx) || (object.id % 2 ? 1 : -1);
+            state.impacts.push({
+              type: object.type, x: objectX, z: objectZ, yaw: objectAngle, side,
+              speed: state.speed / 3.6, start: state.time, duration
+            });
+          }
           encounter(object.type);
         } else if (object.z < -4.5) {
           object.passed = true;
@@ -381,13 +410,15 @@
         remaining -= step;
       }
       if (state.health <= 0) {
-        state.status = 'finished';
-        state.braking = false;
-        audio.setDriving(false);
-        audio.effect('finish');
-        onUpdate(state);
-        onFinish(state);
-        return;
+        // Hold the final score and the road still while the last barrier falls.
+        advanceClock(remaining);
+        if (state.time >= finishAt) {
+          state.status = 'finished';
+          audio.effect('finish');
+          onUpdate(state);
+          onFinish(state);
+          return;
+        }
       }
       onUpdate(state);
       if (state.status === 'running') frameId = requestAnimationFrame(tick);
@@ -397,7 +428,7 @@
       previousTime = undefined;
       state.status = 'running';
       audio.update(state);
-      audio.setDriving(true);
+      audio.setDriving(state.health > 0);
       onUpdate(state);
       frameId = requestAnimationFrame(tick);
     }
@@ -407,7 +438,7 @@
       start() {
         cancelAnimationFrame(frameId);
         Object.assign(state, startingState());
-        wave = objectId = bonus = nextAudio = steeringInput = 0;
+        wave = objectId = bonus = nextAudio = steeringInput = finishAt = 0;
         nextWave = 55;
         fillRoad();
         beginFrames();
@@ -424,10 +455,10 @@
         if (state.status === 'paused') beginFrames();
       },
       steer(value) {
-        steeringInput = state.status === 'running' && Number.isFinite(value) ? clamp(value, -1, 1) : 0;
+        steeringInput = state.status === 'running' && state.health > 0 && Number.isFinite(value) ? clamp(value, -1, 1) : 0;
       },
       brake(pressed) {
-        state.braking = state.status === 'running' && Boolean(pressed);
+        state.braking = state.status === 'running' && state.health > 0 && Boolean(pressed);
       },
       setSound: audio.setEnabled,
       setVolume: audio.setVolume,

@@ -309,10 +309,13 @@
     return m;
   }
 
+  const IMPACT_MESHES = ['waterRipple','waterDrop','repairHalo','repairSpark','boostHalo'];
+
   function prop(type) {
     const m=new Mesh();
     if(type==='cone') {
       m.box(0,.01,0,.95,.12,.90,'#c25a3a');
+      m.quad([-.475,.01,-.45],[-.475,.01,.45],[.475,.01,.45],[.475,.01,-.45],'#854632');
       for(const [y,top,r,r2,c] of [[.13,.50,.37,.26,'#fa793e'],[.50,.69,.26,.19,'#fff3d2'],[.69,1.15,.19,.056,'#fa793e']])
         m.rings(0,0,0,[[r,y,r],[r2,top,r2]],8,c);
     } else if(type==='barrier') {
@@ -328,14 +331,16 @@
         m.box(x,1.12,0,.23,.16,.23,'#ec9c3d');
         m.box(x,1.28,0,.12,.06,.12,'#ffdc7b');
       }
-    } else if(type==='oil'||type==='pothole') {
-      const oil=type==='oil', c=oil?'#344354':'#3e464e';
-      m.ellipse(0,.025,0,1.29,1.20,oil?'#455b6c':'#9c9586',11);
-      m.ellipse(.03,.031,-.05,1.1,1.01,c,10);
-      if(oil) {
-        m.ellipse(-.34,.035,-.30,.43,.10,'#6e9ba2',8);
-        m.ellipse(.22,.034,.43,.32,.075,'#8c889b',7);
-      } else m.ellipse(.14,.036,.24,.65,.29,'#4d5050',9);
+    } else if(type==='oil') {
+      m.ellipse(0,.025,0,1.29,1.2,'#699eaf',13);
+      m.ellipse(.06,.031,-.06,1.14,1.01,'#548d9e',12);
+      m.ellipse(-.44,.035,-.30,.45,.075,'#b6e3de',9);
+      m.ellipse(.27,.035,.40,.40,.055,'#9ed2d5',9);
+      m.ellipse(.64,.035,.29,.12,.035,'#d6ede1',7);
+    } else if(type==='pothole') {
+      m.ellipse(0,.025,0,1.29,1.20,'#9c9586',11);
+      m.ellipse(.03,.031,-.05,1.1,1.01,'#3e464e',10);
+      m.ellipse(.14,.036,.24,.65,.29,'#4d5050',9);
     } else if(type==='repair') {
       m.box(0,.50,0,1.12,.81,.61,'#259c83');
       m.box(0,1.32,0,.51,.085,.15,'#305e60');
@@ -345,6 +350,24 @@
         m.box(0,.63,s*.317,.18,.51,.035,'#fff9dc');
       }
       m.box(0,.51,0,1.14,.085,.64,'#73c5a1');
+    } else if(type==='waterRipple'||type==='repairHalo'||type==='boostHalo') {
+      const col=type==='waterRipple'?'#c1ece9':type==='repairHalo'?'#8fffd0':'#ffd879';
+      const inner=type==='waterRipple'?.95:.89;
+      for(let i=0;i<32;i++) {
+        const a=TAU*i/32, b=TAU*(i+1)/32;
+        const x=Math.cos(a), z=Math.sin(a), u=Math.cos(b), v=Math.sin(b);
+        m.quad([x*inner,0,z*inner],[x,0,z],[u,0,v],[u*inner,0,v*inner],col);
+      }
+    } else if(type==='waterDrop') {
+      m.rings(0,-.09,0,[[.02,0,.02],[.085,.08,.085],[.05,.16,.05],[.01,.24,.01]],6,'#a7e4e8');
+    } else if(type==='repairSpark') {
+      for(let i=0;i<8;i++) {
+        const point=k=>{
+          const a=TAU*k/8, r=k%2?.18:1;
+          return [.21*r*Math.cos(a),.29*r*Math.sin(a),0];
+        };
+        m.tri([0,0,0],point(i),point(i+1),i%2?'#eeffdc':'#acffdb');
+      }
     } else {
       const shape=[[-.10,1.73],[-.56,.91],[-.12,.91],[-.31,.38],[.58,1.28],[.13,1.28],[.38,1.73]];
       // Two convex parts share the lightning bolt's central diagonal.
@@ -356,6 +379,73 @@
       shape.forEach(([x,y],i)=>{const [u,v]=shape[(i+1)%shape.length];m.quad([x,y,-.14],[u,v,-.14],[u,v,.14],[x,y,.14],'#e99932');});
     }
     return m;
+  }
+
+  // All parts share a local frame aligned with the road, or with the moving bus for pickups.
+  // Scale first, then pitch (X), roll (Z) and yaw (Y). Positive pitch tips the top forward.
+  function impactParts(s,emit) {
+    if(!s.impacts?.length) return;
+    const ease=value=>{
+      const v=Math.max(0,Math.min(1,value));
+      return v*v*(3-2*v);
+    };
+    for(const hit of s.impacts) {
+      const age=s.time-hit.start, p=age/hit.duration;
+      if(p<0||p>=1) continue;
+      const pickup=hit.type==='repair'||hit.type==='boost';
+      const z=pickup?s.roadZ??s.distance:hit.z;
+      const x=pickup?roadX(z)+(s.laneX||0)*LANE:hit.x;
+      const yaw=pickup?Math.atan(roadSlope(z))+(s.heading||0):hit.yaw;
+      const sn=Math.sin(yaw), cs=Math.cos(yaw);
+      function part(type,lateral,y,forward,turn,roll,pitch,sx,sy,sz,alpha) {
+        if(alpha<=0) return;
+        emit(type,x+lateral*cs+forward*sn,y,z+forward*cs-lateral*sn,
+          yaw+turn,roll,pitch,sx,sy,sz,alpha);
+      }
+      if(hit.type==='cone') {
+        const toVerge=Math.max(2.2,ROAD-hit.side*(hit.x-roadX(hit.z))+1.9);
+        const across=hit.side*toVerge*p*(1.5-.5*p);
+        const forward=hit.speed*age*(1.04-.20*p);
+        const lift=8*p-6.4*p*p;
+        part('cone',across,lift,forward,hit.side*p*2.4,-hit.side*p*5.9,p*3.4,1,1,1,1-ease((p-.52)/.48));
+      } else if(hit.type==='barrier') {
+        const fall=ease((p-.08)/.43), crush=ease(p/.40);
+        const pitch=fall*Math.PI*.5, depth=1-.46*crush;
+        // A short skid clears the tall coach's silhouette before the striped face tips skyward.
+        const skid=1-Math.pow(1-Math.min(1,p/.60),3);
+        const shove=(2.0+hit.speed*.36)*skid;
+        const across=hit.side*1.90*skid;
+        // Keep the leading end of the skid feet on the tarmac as they tip over.
+        const y=.01+.425*depth*Math.sin(pitch);
+        part('barrier',across,y,shove,hit.side*.16*fall,0,pitch,
+          1+.11*crush,1-.29*crush,depth,1-ease((p-.57)/.43));
+      } else if(hit.type==='oil') {
+        const spread=1-(1-p)*(1-p), fade=1-ease((p-.32)/.68);
+        part('oil',0,0,0,0,0,0,1+1.38*spread,1,1+.80*spread,fade);
+        part('waterRipple',0,.048,0,0,0,0,1.10+2.2*spread,1,1.05+1.27*spread,.72*Math.sin(Math.PI*p));
+        for(let i=0;i<6;i++) {
+          const side=i%2?1:-1, row=Math.floor(i/2), t=Math.min(1,p/(.63+.09*row));
+          const across=side*(.70+(.95+.38*row)*t), forward=(row-1)*.64+1.35*t;
+          const size=.80+.18*row;
+          part('waterDrop',across,.11+3.7*t*(1-t),forward,0,-side*t*.9,0,size,size,size,(1-ease((t-.60)/.40))*ease(p/.08));
+        }
+      } else if(pickup) {
+        const repair=hit.type==='repair', spread=1-(1-p)*(1-p);
+        const light=(1-ease((p-.24)/.76))*(.40+.60*ease(p/.12));
+        const halo=repair?'repairHalo':'boostHalo';
+        part(halo,0,.055,0,0,0,0,1.47+1.13*spread,1,2.88+1.23*spread,light*.92);
+        if(repair) {
+          part(halo,0,.050,0,0,0,0,1.48+1.60*spread,1,2.90+1.73*spread,light*.29);
+          for(let i=0;i<8;i++) {
+            const side=i%2?1:-1, row=Math.floor(i/2), t=(p-(i%3)*.065)/.84;
+            if(t<=0||t>=1) continue;
+            const size=.58+.64*Math.sin(t*Math.PI);
+            part('repairSpark',side*(1.28+.65*t),.60+2.65*t+row*.16,(row-1.5)*1.43,
+              0,side*t*.30,.48,size,size,size,Math.sin(t*Math.PI));
+          }
+        }
+      }
+    }
   }
 
   // Aim the vanishing point 2.5% above the image. Back the camera up on
@@ -380,14 +470,13 @@
     attribute vec3 aPos;
     attribute vec3 aColor;
     uniform vec3 offset;
-    uniform vec4 turn;
+    uniform mat3 model;
     uniform vec4 cameraAngles;
     uniform vec3 projection;
     uniform float lighting;
     varying lowp vec3 color;
     void main() {
-      vec3 p = vec3(aPos.x*turn.z - aPos.y*turn.w, aPos.x*turn.w + aPos.y*turn.z, aPos.z);
-      vec3 w = offset + vec3(p.x*turn.x + p.z*turn.y, p.y, -p.x*turn.y + p.z*turn.x);
+      vec3 w = offset + model * aPos;
       float forward = w.x*cameraAngles.y + w.z*cameraAngles.x;
       float viewX = w.x*cameraAngles.x - w.z*cameraAngles.y;
       float viewY = w.y*cameraAngles.z + forward*cameraAngles.w;
@@ -396,7 +485,8 @@
       float fog = smoothstep(58.0,278.0,depth)*.44;
       color = mix(aColor*lighting,vec3(.91,.77,.67),fog);
     }`;
-  const fragmentCode=`precision mediump float; varying lowp vec3 color; void main(){gl_FragColor=vec4(color,1.0);}`;
+  const fragmentCode=`precision mediump float; varying lowp vec3 color; uniform lowp float opacity;
+    void main(){gl_FragColor=vec4(color,opacity);}`;
   const skyVertex=`attribute vec2 aPos; varying lowp float altitude;
     varying mediump vec2 uv; void main(){altitude=aPos.y;uv=aPos;gl_Position=vec4(aPos,0.,1.);}`;
   const skyFragment=`precision mediump float; varying lowp float altitude;
@@ -432,6 +522,7 @@
   function gpuRenderer(canvas,gl,is2) {
     let scene,sky,uniform,skySun,skyAspect,skyBuffer,coach,shadow,trail,range,items, lost=false;
     const chunks=new Map();
+    const modelMatrix=new Float32Array(9);
     function upload(model) {
       const b=gl.createBuffer();
       gl.bindBuffer(gl.ARRAY_BUFFER,b);
@@ -442,7 +533,7 @@
       scene=program(gl,is2,vertexCode,fragmentCode);
       sky=program(gl,is2,skyVertex,skyFragment);
       skySun=gl.getUniformLocation(sky,'sun');skyAspect=gl.getUniformLocation(sky,'aspect');
-      uniform=Object.fromEntries(['offset','turn','cameraAngles','projection','lighting'].map(n=>[n,gl.getUniformLocation(scene,n)]));
+      uniform=Object.fromEntries(['offset','model','cameraAngles','projection','lighting','opacity'].map(n=>[n,gl.getUniformLocation(scene,n)]));
       skyBuffer=gl.createBuffer();
       gl.bindBuffer(gl.ARRAY_BUFFER,skyBuffer);
       gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
@@ -456,7 +547,7 @@
       }
       trail=upload(streak);
       items={};
-      for(const type of ['cone','barrier','oil','pothole','repair','boost']) items[type]=upload(prop(type));
+      for(const type of ['cone','barrier','oil','pothole','repair','boost',...IMPACT_MESHES]) items[type]=upload(prop(type));
       gl.enable(gl.DEPTH_TEST);
       gl.disable(gl.CULL_FACE);
       chunks.clear();
@@ -497,13 +588,29 @@
       gl.uniform4f(uniform.cameraAngles,Math.cos(cam.a),Math.sin(cam.a),Math.cos(cam.pitch),Math.sin(cam.pitch));
       gl.uniform3f(uniform.projection,cam.f/cam.aspect,cam.f,0);
       gl.uniform1f(uniform.lighting,1);
-      function draw(mesh,x,y,z,a=0,roll=0) {
+      gl.uniform1f(uniform.opacity,1);
+      function draw(mesh,x,y,z,a=0,roll=0,pitch=0,sx=1,sy=1,sz=1,fadeSolid=false) {
+        const cy=Math.cos(a), sn=Math.sin(a), cr=Math.cos(roll), sr=Math.sin(roll);
+        const cp=Math.cos(pitch), sp=Math.sin(pitch);
+        modelMatrix[0]=cy*cr*sx; modelMatrix[1]=sr*sx; modelMatrix[2]=-sn*cr*sx;
+        modelMatrix[3]=(sn*sp-cy*sr*cp)*sy; modelMatrix[4]=cr*cp*sy; modelMatrix[5]=(sn*sr*cp+cy*sp)*sy;
+        modelMatrix[6]=(sn*cp+cy*sr*sp)*sz; modelMatrix[7]=-cr*sp*sz; modelMatrix[8]=(cy*cp-sn*sr*sp)*sz;
+        gl.uniformMatrix3fv(uniform.model,false,modelMatrix);
         gl.uniform3f(uniform.offset,x-cam.cx,y-cam.cy,z-cam.cz);
-        gl.uniform4f(uniform.turn,Math.cos(a),Math.sin(a),Math.cos(roll),Math.sin(roll));
         gl.bindBuffer(gl.ARRAY_BUFFER,mesh.buf);
         gl.vertexAttribPointer(0,3,gl.FLOAT,false,24,0);
         gl.vertexAttribPointer(1,3,gl.FLOAT,false,24,12);
+        // Fade the exterior silhouette without accumulating alpha on hidden interior faces.
+        if(fadeSolid) {
+          gl.colorMask(false,false,false,false);
+          gl.depthMask(true);
+          gl.drawArrays(gl.TRIANGLES,0,mesh.n);
+          gl.depthMask(false);
+          gl.colorMask(true,true,true,true);
+          gl.depthFunc(gl.LEQUAL);
+        }
         gl.drawArrays(gl.TRIANGLES,0,mesh.n);
+        if(fadeSolid) gl.depthFunc(gl.LESS);
       }
       draw(range,0,-15,d);
       const start=Math.floor((cam.cz-5)/CHUNK),end=Math.floor((d+FAR)/CHUNK);
@@ -527,6 +634,20 @@
       draw(shadow,x+.13,.018,d+.12,a);
       if(s.boost) draw(trail,x,.12,d+.16*Math.sin(t*16),a);
       draw(coach,x,.035+Math.sin(d*1.05)*speed*.018+(s.flat?0:Math.cos(d*.73)*.008),d,a,roll);
+      if(s.impacts?.length) {
+        gl.enable(gl.BLEND);
+        gl.blendFuncSeparate(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA,gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
+        gl.depthMask(false);
+        impactParts(s,(type,x,y,z,yaw,roll,pitch,sx,sy,sz,alpha)=>{
+          const solid=type==='cone'||type==='barrier';
+          gl.uniform1f(uniform.opacity,alpha);
+          if(solid && alpha===1) gl.depthMask(true);
+          draw(items[type],x,y,z,yaw,roll,pitch,sx,sy,sz,solid && alpha<1);
+          if(solid && alpha===1) gl.depthMask(false);
+        });
+        gl.depthMask(true);
+        gl.disable(gl.BLEND);
+      }
     }
 
     function dispose(){
@@ -543,6 +664,8 @@
   // the road playable on devices that cannot create a WebGL context.
   function canvasRenderer(canvas, ctx) {
     const cars = new Map();
+    const fadeCanvas = canvas.ownerDocument.createElement('canvas');
+    const fadeContext = fadeCanvas.getContext('2d');
     function faces(m) {
       const out=[];
       let group=0, layer=0, side=0;
@@ -554,7 +677,7 @@
       }
       return out;
     }
-    for(const type of ['cone','barrier','oil','pothole','boost','repair']) cars.set(type,faces(prop(type)));
+    for(const type of ['cone','barrier','oil','pothole','boost','repair',...IMPACT_MESHES]) cars.set(type,faces(prop(type)));
     cars.set('bus',faces(bus(true)));
     function render(s) {
       const w=canvas.clientWidth||640,h=canvas.clientHeight||400;
@@ -566,10 +689,10 @@
         const scale=h*.5*c.f/Math.max(.2,depth);
         return [w*.5+(dx*cs-dz*sn)*scale,h*.5-(dy*cp+forward*sp)*scale,depth];
       }
-      function polygon(points,col) {
-        ctx.fillStyle=col;ctx.beginPath();ctx.moveTo(points[0][0],points[0][1]);
-        for(let i=1;i<points.length;i++) ctx.lineTo(points[i][0],points[i][1]);
-        ctx.closePath();ctx.fill();
+      function polygon(points,col,target=ctx) {
+        target.fillStyle=col;target.beginPath();target.moveTo(points[0][0],points[0][1]);
+        for(let i=1;i<points.length;i++) target.lineTo(points[i][0],points[i][1]);
+        target.closePath();target.fill();
       }
       const near=c.cz+1.7, far=d+FAR, zs=Math.floor(far/4)*4;
       const groundLine=point(roadX(zs+4),0,zs+4)[1];
@@ -598,21 +721,43 @@
           if(Math.abs(z/4%3)===0) strip(side*LANE*.5-.09,side*LANE*.5+.09,.02,'#fcf8de');
         }
       }
-      function model(type,x,y,z,yaw,roll) {
+      function model(type,x,y,z,yaw,roll,pitch=0,sx=1,sy=1,sz=1,alpha=1) {
         const source=cars.get(type);
-        if(!source) return;
-        const cy=Math.cos(yaw),sy=Math.sin(yaw), cr=Math.cos(roll),sr=Math.sin(roll), tris=[];
-        const cameraSide=((c.cx-x)*cy-(c.cz-z)*sy)*cr+(c.cy-y)*sr;
+        if(!source || alpha<=0) return;
+        const cy=Math.cos(yaw),snYaw=Math.sin(yaw),cr=Math.cos(roll),sr=Math.sin(roll),tris=[];
+        const cpitch=Math.cos(pitch),spitch=Math.sin(pitch);
+        const cameraSide=((c.cx-x)*cy-(c.cz-z)*snYaw)*cr+(c.cy-y)*sr;
         for(const f of source) {
           if (f.side && f.side*cameraSide<1.1) continue;
           const p=f.v.map(([vx,vy,vz])=>{
-            const lx=vx*cr-vy*sr;
-            return point(x+lx*cy+vz*sy,y+vx*sr+vy*cr,z-lx*sy+vz*cy);
+            const py=vy*sy*cpitch-vz*sz*spitch,pz=vy*sy*spitch+vz*sz*cpitch;
+            const lx=vx*sx*cr-py*sr;
+            return point(x+lx*cy+pz*snYaw,y+vx*sx*sr+py*cr,z-lx*snYaw+pz*cy);
           });
           if(p.every(v=>v[2]>.2)) tris.push({p,layer:f.layer,z:p[0][2]+p[1][2]+p[2][2],col:f.col});
         }
         tris.sort((a,b)=>a.layer-b.layer||b.z-a.z);
-        for (const t of tris) polygon(t.p,t.col);
+        if (alpha>=1) {
+          for (const t of tris) polygon(t.p,t.col);
+          return;
+        }
+        // Fade the visible silhouette once so the triangles behind it do not show through.
+        let left=w,right=0,top=h,bottom=0;
+        for (const t of tris) for (const [px,py] of t.p) {
+          left=Math.min(left,px); right=Math.max(right,px);
+          top=Math.min(top,py); bottom=Math.max(bottom,py);
+        }
+        left=Math.max(0,Math.floor(left)); top=Math.max(0,Math.floor(top));
+        const width=Math.min(w,Math.ceil(right))-left,height=Math.min(h,Math.ceil(bottom))-top;
+        if (width<=0 || height<=0) return;
+        if (fadeCanvas.width<width) fadeCanvas.width=Math.ceil(width/32)*32;
+        if (fadeCanvas.height<height) fadeCanvas.height=Math.ceil(height/32)*32;
+        fadeContext.setTransform(1,0,0,1,-left,-top);
+        fadeContext.clearRect(left,top,width,height);
+        for (const t of tris) polygon(t.p,t.col,fadeContext);
+        ctx.globalAlpha=alpha;
+        ctx.drawImage(fadeCanvas,0,0,width,height,left,top,width,height);
+        ctx.globalAlpha=1;
       }
       const actors=[];
       for(let n=Math.floor(near/8);n<=Math.ceil(far/8);n++) {
@@ -624,7 +769,15 @@
       }
       for(const o of s.objects||[]) if(o.z>-7&&o.z<155) actors.push({type:o.type,x:roadX(d+o.z)+o.lane*LANE,z:d+o.z});
       actors.push({type:'bus',x:roadX(d)+(s.laneX||0)*LANE,z:d});
-      actors.sort((a,b)=>b.z-a.z);
+      impactParts(s,(type,x,y,z,yaw,roll,pitch,sx,sy,sz,alpha)=>{
+        const ground=type==='oil'||type==='waterRipple'||type==='repairHalo'||type==='boostHalo'||type==='barrier';
+        actors.push({type,x,y,z,yaw,roll,pitch,sx,sy,sz,alpha,ground});
+      });
+      for (const a of actors) {
+        const centerY=a.type==='bus' ? 1.4 : a.y||0;
+        a.depth=((a.x-c.cx)*sn+(a.z-c.cz)*cs)*cp-centerY*sp;
+      }
+      actors.sort((a,b)=>Number(Boolean(b.ground))-Number(Boolean(a.ground))||b.depth-a.depth);
       for(const a of actors) {
         if(a.type==='tree') {
           const b=point(a.x,0,a.z),top=point(a.x,a.size,a.z),sh=b[1]-top[1];
@@ -636,6 +789,8 @@
           } else {
             ctx.fillStyle='#89a153';ctx.beginPath();ctx.ellipse(b[0],top[1]+sh*.33,sh*.32,sh*.34,0,0,TAU);ctx.fill();
           }
+        } else if (a.alpha!==undefined) {
+          model(a.type,a.x,a.y,a.z,a.yaw,a.roll,a.pitch,a.sx,a.sy,a.sz,a.alpha);
         } else {
           const bus=a.type==='bus';
           const yaw=Math.atan(roadSlope(a.z))+(bus ? s.heading||0 : 0);
