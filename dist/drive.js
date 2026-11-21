@@ -22,38 +22,87 @@
   const roadSlope = z => 0.132 * Math.cos(z * 0.012) + 0.176 * Math.cos(z * 0.022 + 0.7);
 
   function makeSound() {
-    let ctx, master, motor, engineGain;
+    const engineUrl = 'assets/bus-engine.wav';
+    const masterVolume = 0.45;
+    let ctx, master, motor, engineGain, engineBuffer, media;
+    let loading = false;
+    let stopTimer;
+    let pitch = 1;
+    let volume = 0.65;
+    let previousSampleTime = 0;
+    let previousSpeed = 0;
     let enabled = true;
     let driving = false;
 
-    function level() {
-      if (master) master.gain.setTargetAtTime(enabled ? 0.45 : 0, ctx.currentTime, 0.018);
-      if (engineGain) engineGain.gain.setTargetAtTime(driving ? 0.056 : 0, ctx.currentTime, 0.025);
+    function syncPlayback() {
+      const audible = enabled && driving;
+      clearTimeout(stopTimer);
+      if (master) master.gain.setTargetAtTime(enabled ? masterVolume : 0, ctx.currentTime, 0.018);
+      if (media) {
+        media.muted = !audible;
+        media.volume = volume * masterVolume;
+        media.playbackRate = pitch;
+        if (audible && media.paused) media.play().catch(() => {});
+        if (!audible) media.pause();
+        return;
+      }
+      if (audible && engineBuffer && !motor) {
+        motor = ctx.createBufferSource();
+        motor.buffer = engineBuffer;
+        motor.loop = true;
+        motor.playbackRate.value = pitch;
+        motor.connect(engineGain);
+        motor.start();
+      }
+      if (!motor) return;
+      engineGain.gain.setTargetAtTime(audible ? volume : 0, ctx.currentTime, 0.025);
+      if (!audible) {
+        // A quick pause/resume reverses the fade on the same playhead.
+        stopTimer = setTimeout(() => {
+          motor.stop();
+          motor.disconnect();
+          motor = null;
+        }, 160);
+      }
     }
 
     function unlock() {
-      if (!enabled) return;
-      const Audio = window.AudioContext || window.webkitAudioContext;
-      if (!Audio) return;
-      try {
-        if (!ctx) {
-          ctx = new Audio();
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (!ctx && AudioContext) {
+        try {
+          ctx = new AudioContext();
           master = ctx.createGain();
           master.gain.value = 0;
           master.connect(ctx.destination);
-          motor = ctx.createOscillator();
           engineGain = ctx.createGain();
           engineGain.gain.value = 0;
-          motor.type = 'triangle';
-          motor.frequency.value = 48;
-          motor.connect(engineGain);
           engineGain.connect(master);
-          motor.start();
+        } catch { ctx = master = engineGain = null; }
+      }
+      if (ctx && ctx.state !== 'running') ctx.resume().catch(() => {});
+
+      // Browsers can play a sibling file as media even when file:// blocks fetch.
+      if (!ctx || window.location?.protocol === 'file:') {
+        if (!media && window.Audio) {
+          media = new window.Audio(engineUrl);
+          media.loop = true;
+          media.preservesPitch = false;
+          media.webkitPreservesPitch = false;
         }
-        if (ctx.state !== 'running') ctx.resume().catch(() => {});
-        level();
-      } catch {
-        // Audio may be unavailable or disallowed while graphics and simulation work.
+      } else if (!engineBuffer && !loading) {
+        loading = true;
+        fetch(engineUrl)
+          .then(response => {
+            if (!response.ok) throw new Error('Engine recording unavailable');
+            return response.arrayBuffer();
+          })
+          .then(bytes => ctx.decodeAudioData(bytes))
+          .then(buffer => {
+            engineBuffer = buffer;
+            syncPlayback();
+          })
+          .catch(() => { /* Retry on the next start, resume or sound activation. */ })
+          .finally(() => { loading = false; });
       }
     }
 
@@ -80,17 +129,36 @@
       setEnabled(value) {
         enabled = Boolean(value);
         if (enabled && driving) unlock();
-        level();
+        syncPlayback();
       },
       setDriving(value) {
         driving = value;
-        if (value) unlock();
-        level();
+        if (driving && enabled) unlock();
+        syncPlayback();
       },
       update(state) {
-        if (enabled && motor && ctx.state === 'running') {
-          const thrum = state.flat ? 3 * Math.sin(12 * state.time) : 0;
-          motor.frequency.setTargetAtTime(27 + state.rpm / 57 + thrum, ctx.currentTime, 0.085);
+        const dt = state.time - previousSampleTime;
+        const acceleration = dt > 0 ? (state.speed - previousSpeed) / dt : 0;
+        previousSampleTime = state.time;
+        previousSpeed = state.speed;
+        const load = state.braking ? 0 : clamp(acceleration / 32, 0, 1);
+        const boost = state.braking ? 0 : Math.min(1, state.boost / 0.30);
+        const overrun = clamp(-acceleration / 40, 0, 1);
+        // RPM already includes the drop at each automatic upshift. Engine load
+        // adds a short growl as the bus accelerates, especially under turbo.
+        const targetPitch = clamp(0.84 + (state.rpm - 2500) * 0.00018
+          + (state.speed - 35) * 0.0025 + load * 0.10 + boost * 0.18 - overrun * 0.04, 0.76, 1.70);
+        const targetVolume = 0.65 + load * 0.15 + boost * 0.13 - (state.braking ? 0.15 : 0);
+        const smoothing = dt > 0 ? 1 - Math.exp(-dt / 0.10) : 1;
+        pitch += (targetPitch - pitch) * smoothing;
+        volume += (targetVolume - volume) * smoothing;
+        if (!enabled || !driving) return;
+        if (motor) {
+          motor.playbackRate.setTargetAtTime(pitch, ctx.currentTime, 0.05);
+          engineGain.gain.setTargetAtTime(volume, ctx.currentTime, 0.06);
+        } else if (media) {
+          media.playbackRate = pitch;
+          media.volume = volume * masterVolume;
         }
       },
       effect(type) {
@@ -316,6 +384,7 @@
     function beginFrames() {
       previousTime = undefined;
       state.status = 'running';
+      audio.update(state);
       audio.setDriving(true);
       onUpdate(state);
       frameId = requestAnimationFrame(tick);

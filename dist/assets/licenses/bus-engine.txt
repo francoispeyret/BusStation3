@@ -1,0 +1,12 @@
+bus-engine.wav
+
+Bus Motor/Engine Sound Loop
+Field recording by qubodup, published 6 June 2008 on Freesound.
+https://freesound.org/people/qubodup/sounds/54909/
+
+CC0 1.0 Universal
+https://creativecommons.org/publicdomain/zero/1.0/
+
+Game adaptation: a 4.643-second excerpt, mixed to mono at 32 kHz,
+lightly equalized and level-matched, with a phase-aligned crossfade
+for continuous looping.
