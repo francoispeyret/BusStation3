@@ -130,6 +130,10 @@
   }
   function update(state) {
     if (view !== 'run') return;
+    if (cabinet.dataset.phase !== state.phase) {
+      cabinet.dataset.phase = state.phase;
+      $('touch-controls').hidden = state.phase !== 'driving';
+    }
     renderer.render(state);
     if (state.time - lastHud >= .16 || state.status === 'finished') { hud(state); lastHud = state.time; }
   }
@@ -177,6 +181,7 @@
     lastHud = -1;
   }
   function showRun(active) {
+    delete cabinet.dataset.phase;
     document.body.classList.toggle('in-race', active);
     $('attract').hidden = active;
     road.hidden = !active;
@@ -211,10 +216,13 @@
     hud({score:0,distance:0,lap:1,speed:0,health:3});
     $('play').focus({preventScroll:true});
   }
-  function openDialog(kind, symbol, heading, html) {
+  function openDialog(kind, symbol, heading, html, reveal = false) {
     releaseControls();
     notice.classList.add('is-paused');
+    modal.classList.toggle('finish-reveal', reveal);
     panel = kind;
+    title.toggleAttribute('autofocus', kind === 'finish');
+    if (kind === 'finish') title.tabIndex = -1;
     title.textContent = heading;
     body.innerHTML = html;
     $('modal-symbol').innerHTML = icon(symbol);
@@ -230,7 +238,7 @@
       $('arcade-tab').setAttribute('aria-current','page');
     }
     if (!modal.open) modal.showModal();
-    const focus = body.querySelector('[data-initial-focus]') || $('close-modal');
+    const focus = kind === 'finish' ? title : body.querySelector('[data-initial-focus]') || $('close-modal');
     if (!focus.hidden) focus.focus({preventScroll:true});
   }
   function closeDialog() {
@@ -246,7 +254,8 @@
     if (view !== 'run') return;
     game.pause();
     openDialog('pause','pause','Pause au terminus',
-      '<p class="modal-desc">' + number.format(Math.floor(game.state.distance)) + ' m parcourus · Tour ' + game.state.lap + '</p><div class="modal-buttons"><button class="primary" data-action="resume" data-initial-focus>' + icon('play') + 'Reprendre</button><button class="secondary" data-action="finish">Terminer la course</button></div>');
+      '<p class="modal-desc">' + number.format(Math.floor(game.state.distance)) + ' m parcourus · Tour ' + game.state.lap + '</p><div class="modal-buttons"><button class="primary" data-action="resume" data-initial-focus>' + icon('play') + 'Reprendre</button>' +
+      (game.state.phase === 'stopping' ? '' : '<button class="secondary" data-action="finish">Terminer la course</button>') + '</div>');
   }
   function resume() {
     if (graphicsLost) return;
@@ -255,14 +264,38 @@
     cabinet.focus({preventScroll:true});
   }
   function finish(state) {
+    const firstResult = view !== 'finish';
     view = 'finish';
     clearNotices();
     $('touch-controls').hidden = true;
     $('pause').hidden = true;
     hud(state);
-    const summary = '<strong class="end-score">' + number.format(state.score) + ' <span>pts</span></strong><p class="modal-desc">' + number.format(Math.floor(state.distance)) + ' m parcourus · Tour ' + state.lap + '</p>';
+    const metres = Math.floor(state.distance);
+    const summary = '<strong class="end-score"><number-flow id="result-score">' + number.format(state.score) + '</number-flow> <span>pts</span></strong><p class="modal-desc"><number-flow id="result-distance">' + number.format(metres) + '</number-flow> m parcourus · Tour ' + state.lap + '</p>';
     const saving = scoreSaved ? '<p class="saved">Score enregistré.</p>' : '<form class="save-form" id="save-score"><label for="initials">Signe ton score avec trois lettres</label><div class="save-row"><input id="initials" name="initials" required minlength="3" maxlength="3" pattern="[A-Z]{3}" placeholder="ABC" autocomplete="off" autocapitalize="characters" spellcheck="false" title="Trois lettres de A à Z"><button type="submit" class="primary">Enregistrer</button></div></form>';
-    openDialog('finish','flag','Fin de la course',summary + saving + '<div class="modal-buttons"><button class="secondary" data-action="restart">' + icon('retry') + 'Rejouer</button><button class="secondary" data-action="home">Accueil</button></div>');
+    openDialog('finish','flag','Fin de la course',summary + saving + '<div class="modal-buttons"><button class="secondary" data-action="restart">' + icon('retry') + 'Rejouer</button><button class="secondary" data-action="home">Accueil</button></div>',firstResult);
+    const scoreDial = $('result-score');
+    const roll = firstResult && typeof scoreDial.update === 'function'
+      && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const resultDials = [[scoreDial, state.score], [$('result-distance'), metres]];
+    for (const [dial, value] of resultDials) {
+      if (typeof dial.update !== 'function') continue;
+      dial.locales = 'fr-FR';
+      dial.transformTiming = {duration: 830, easing: 'cubic-bezier(.22,.68,.2,1)'};
+      dial.opacityTiming = {duration: 240, easing: 'ease-out'};
+      dial.setAttribute('role', 'img');
+      setDial(dial, roll ? 0 : value, false);
+      dial.setAttribute('aria-label', number.format(value));
+      dial.replaceChildren();
+    }
+    if (roll) {
+      // Let the dialog's fade reveal the zeroes before the reels start turning.
+      setTimeout(() => {
+        for (const [dial, value] of resultDials) {
+          if (dial.isConnected && modal.open) setDial(dial, value, true);
+        }
+      }, 160);
+    }
     if (!scoreSaved) {
       const field = $('initials');
       field.addEventListener('input',() => {
@@ -329,7 +362,11 @@
   modal.addEventListener('click',e => {
     const action = e.target.closest('[data-action]')?.dataset.action;
     if (action === 'resume') resume();
-    if (action === 'finish') { game.stop(); finish(game.state); }
+    if (action === 'finish') {
+      closeDialog();
+      game.endRun();
+      cabinet.focus({preventScroll:true});
+    }
     if (action === 'restart') start();
     if (action === 'home') home();
     if (action === 'close') dismiss();
@@ -420,7 +457,7 @@
     applyControls();
   }
   function setControl(id, value) {
-    if (game.state.status !== 'running' || modal.open) return;
+    if (game.state.status !== 'running' || game.state.phase === 'stopping' || modal.open) return;
     heldControls.set(id, value);
     applyControls();
   }

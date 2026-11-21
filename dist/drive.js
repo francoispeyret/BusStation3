@@ -2,6 +2,11 @@
   'use strict';
 
   const LAP_METRES = 1000;
+  const INTRO_SECONDS = 3.2;
+  const LAUNCH_WAIT = 0.65;
+  const LAUNCH_SPEED = 48;
+  const BRAKE_SECONDS = 3;
+  const OUTRO_SECONDS = 4.5;
   const LANES = [-1, 0, 1];
   const LANE_WIDTH = 3.65;
   const BUS_HALF_WIDTH = 1.16;
@@ -24,6 +29,8 @@
 
   function makeSound() {
     const engineUrl = 'assets/bus-engine.wav';
+    const horn = {url: 'assets/departure-horn.wav'};
+    const airBrake = {url: 'assets/air-brake.wav'};
     const engineLevel = 0.25;
     const fullScaleGain = 0.45;
     let masterGain = fullScaleGain * 0.6;
@@ -36,6 +43,67 @@
     let previousSpeed = 0;
     let enabled = true;
     let driving = false;
+    let shutdownStart, cueSource, cueMedia;
+    let cueGeneration = 0;
+
+    function cueBytes(cue) {
+      return cue.bytes ||= fetch(cue.url).then(response => {
+        if (!response.ok) throw new Error('Cue unavailable');
+        return response.arrayBuffer();
+      }).catch(() => { cue.bytes = null; return null; });
+    }
+
+    function cueBuffer(cue) {
+      return cue.decoded ||= cueBytes(cue).then(bytes => bytes && ctx.decodeAudioData(bytes))
+        .catch(() => null)
+        .then(buffer => {
+          cue.bytes = null;
+          if (!buffer) cue.decoded = null;
+          return buffer;
+        });
+    }
+
+    // Fetch the two small cues on the launch screen so the first tap can sound immediately.
+    if ((window.AudioContext || window.webkitAudioContext) && window.location?.protocol !== 'file:') {
+      cueBytes(horn);
+      cueBytes(airBrake);
+    }
+
+    function stopCue() {
+      cueGeneration++;
+      if (cueSource) {
+        cueSource.stop();
+        cueSource = null;
+      }
+      if (cueMedia) cueMedia.pause();
+    }
+
+    function playCue(cue) {
+      if (!enabled || !driving || masterGain === 0) return;
+      stopCue();
+      if (!ctx || window.location?.protocol === 'file:') {
+        if (!window.Audio) return;
+        cueMedia ||= new window.Audio();
+        cueMedia.src = cue.url;
+        syncVolume();
+        cueMedia.play().catch(() => {});
+        return;
+      }
+      const generation = cueGeneration;
+      const deadline = performance.now() + 650;
+      cueBuffer(cue).then(buffer => {
+        if (!buffer || generation !== cueGeneration || !masterGain || performance.now() > deadline) return;
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(master);
+        source.onended = () => {
+          source.disconnect();
+          if (cueSource === source) cueSource = null;
+        };
+        cueSource = source;
+        source.start();
+      });
+    }
 
     function syncVolume() {
       if (master) master.gain.setTargetAtTime(enabled ? masterGain : 0, ctx.currentTime, 0.018);
@@ -43,10 +111,15 @@
         media.volume = volume * masterGain;
         media.muted = !enabled || !driving || masterGain === 0;
       }
+      if (cueMedia) {
+        cueMedia.volume = masterGain;
+        cueMedia.muted = !enabled || !driving || masterGain === 0;
+      }
     }
 
     function syncPlayback() {
-      const audible = enabled && driving;
+      const audible = enabled && driving && volume > 0;
+      if (!enabled || !driving) stopCue();
       clearTimeout(stopTimer);
       syncVolume();
       if (media) {
@@ -72,6 +145,17 @@
           motor.disconnect();
           motor = null;
         }, 160);
+      }
+    }
+
+    function applyEngineTone() {
+      if (!enabled || !driving) return;
+      if (motor) {
+        motor.playbackRate.setTargetAtTime(pitch, ctx.currentTime, 0.05);
+        engineGain.gain.setTargetAtTime(volume, ctx.currentTime, 0.06);
+      } else if (media) {
+        media.playbackRate = pitch;
+        media.volume = volume * masterGain;
       }
     }
 
@@ -135,6 +219,25 @@
     }
 
     return {
+      horn() { playCue(horn); },
+      airBrake() { playCue(airBrake); },
+      shutdown(progress) {
+        shutdownStart ||= {pitch, volume};
+        const remaining = 1 - clamp(progress, 0, 1);
+        pitch = 0.32 + (shutdownStart.pitch - 0.32) * remaining;
+        volume = shutdownStart.volume * remaining;
+        if (remaining > 0) {
+          applyEngineTone();
+        } else {
+          clearTimeout(stopTimer);
+          if (motor) {
+            motor.stop();
+            motor.disconnect();
+            motor = null;
+          }
+          if (media) { media.volume = 0; media.pause(); }
+        }
+      },
       setVolume(value) {
         if (!Number.isFinite(value)) return;
         masterGain = fullScaleGain * clamp(value, 0, 1);
@@ -151,6 +254,7 @@
         syncPlayback();
       },
       update(state) {
+        shutdownStart = null;
         const dt = state.time - previousSampleTime;
         const acceleration = dt > 0 ? (state.speed - previousSpeed) / dt : 0;
         previousSampleTime = state.time;
@@ -166,14 +270,7 @@
         const smoothing = dt > 0 ? 1 - Math.exp(-dt / 0.10) : 1;
         pitch += (targetPitch - pitch) * smoothing;
         volume += (targetVolume - volume) * smoothing;
-        if (!enabled || !driving) return;
-        if (motor) {
-          motor.playbackRate.setTargetAtTime(pitch, ctx.currentTime, 0.05);
-          engineGain.gain.setTargetAtTime(volume, ctx.currentTime, 0.06);
-        } else if (media) {
-          media.playbackRate = pitch;
-          media.volume = volume * masterGain;
-        }
+        applyEngineTone();
       },
       effect(type) {
         if (type === 'boost' || type === 'repair' || type === 'lap') {
@@ -181,8 +278,6 @@
           notes.forEach((pitch, i) => note(pitch, pitch, 0.22, i * 0.075, 0.105));
         } else if (type === 'oil') {
           note(340, 100, 0.36, 0, 0.07, 'triangle');
-        } else if (type === 'finish') {
-          [392, 330, 262].forEach((pitch, i) => note(pitch, pitch, 0.27, i * 0.14, 0.085));
         } else {
           note(type === 'pothole' ? 132 : 165, 46, 0.18, 0, 0.22, 'triangle');
         }
@@ -192,7 +287,8 @@
 
   function startingState() {
     return {
-      status: 'ready', distance: 0, roadZ: 0, speed: 48, time: 0, laneX: 0,
+      status: 'ready', phase: 'driving', introProgress: 1, stopProgress: 0,
+      distance: 0, roadZ: 0, speed: LAUNCH_SPEED, time: 0, laneX: 0,
       worldHeading: Math.atan(roadSlope(0)), heading: 0, steer: 0,
       objects: [], impacts: [], boost: 0, slip: 0, flat: false, hit: 0, score: 0, lap: 1,
       lapProgress: 0, health: 3, gear: 3, rpm: 2200, braking: false
@@ -211,7 +307,9 @@
     let nextAudio = 0;
     let steeringInput = 0;
     let slideDirection = 1;
-    let finishAt = 0;
+    let phaseTime = 0;
+    let stopSpeed = 0;
+    let stopRpm = 0;
 
     function emit(type, message, points = 0) {
       bonus += points;
@@ -282,11 +380,7 @@
       state.speed = Math.max(28, state.speed * (type === 'barrier' ? 0.52 : 0.68));
       const message = type === 'pothole' ? 'Nid-de-poule · −1 cœur' : 'Barrière · −1 cœur';
       emit(type, message);
-      if (state.health === 0) {
-        finishAt = state.time + (IMPACT_DURATIONS[type] || 0);
-        state.braking = false;
-        audio.setDriving(false);
-      }
+      if (state.health === 0) beginStop();
     }
 
     function advanceClock(dt) {
@@ -295,6 +389,65 @@
       for (let i = state.impacts.length - 1; i >= 0; i--) {
         const impact = state.impacts[i];
         if (state.time >= impact.start + impact.duration) state.impacts.splice(i, 1);
+      }
+    }
+
+    // During a cinematic the scenery moves, but only player-driven metres count.
+    function rollAlongRoad(path, dt) {
+      if (path <= 0) return;
+      const travel = path * Math.cos(state.worldHeading);
+      const x = roadX(state.roadZ) + state.laneX * LANE_WIDTH + path * Math.sin(state.worldHeading);
+      state.roadZ += travel;
+      state.laneX = clamp((x - roadX(state.roadZ)) / LANE_WIDTH, -STEERING_LIMIT, STEERING_LIMIT);
+      state.heading *= Math.exp(-2 * dt);
+      state.worldHeading = Math.atan(roadSlope(state.roadZ)) + state.heading;
+      for (const object of state.objects) object.z -= travel;
+    }
+
+    function advanceIntro(dt) {
+      const previousSpeed = state.speed;
+      advanceClock(dt);
+      phaseTime += dt;
+      state.introProgress = Math.min(1, phaseTime / INTRO_SECONDS);
+      const t = clamp((phaseTime - LAUNCH_WAIT) / (INTRO_SECONDS - LAUNCH_WAIT), 0, 1);
+      state.speed = LAUNCH_SPEED * t * t * (3 - 2 * t);
+      state.gear = Math.min(3, 1 + Math.floor(state.speed / 21));
+      state.rpm = Math.round(850 + state.speed * 28);
+      rollAlongRoad((previousSpeed + state.speed) * .5 * dt / 3.6, dt);
+      if (state.introProgress === 1) state.phase = 'driving';
+      if (state.time >= nextAudio) {
+        nextAudio = state.time + 0.09;
+        audio.update(state);
+      }
+    }
+
+    function beginStop() {
+      if (state.phase === 'stopping') return;
+      state.phase = 'stopping';
+      phaseTime = 0;
+      stopSpeed = state.speed;
+      stopRpm = state.rpm;
+      steeringInput = state.steer = state.slip = state.boost = 0;
+      state.braking = true;
+      audio.shutdown(0);
+    }
+
+    function advanceStop(dt) {
+      const previous = state.stopProgress;
+      phaseTime += dt;
+      advanceClock(dt);
+      state.introProgress = Math.min(1, state.introProgress + dt / INTRO_SECONDS);
+      const progress = state.stopProgress = Math.min(1, phaseTime / BRAKE_SECONDS);
+      if (previous < 1) {
+        const rest = 1 - progress;
+        state.speed = stopSpeed * rest * rest;
+        state.rpm = Math.round(stopRpm * rest);
+        state.gear = Math.min(6, 1 + Math.floor(state.speed / 21));
+        // Integral of the braking curve. The stopping distance is frame-rate independent.
+        const path = stopSpeed * BRAKE_SECONDS / 10.8 * ((1 - previous) ** 3 - rest ** 3);
+        rollAlongRoad(path, dt);
+        audio.shutdown(progress);
+        if (progress === 1) audio.airBrake();
       }
     }
 
@@ -394,7 +547,7 @@
       state.objects.length = count;
       fillRoad();
       state.score = Math.floor(state.distance) + bonus;
-      if (state.time >= nextAudio) {
+      if (state.phase === 'driving' && state.time >= nextAudio) {
         nextAudio = state.time + 0.09;
         audio.update(state);
       }
@@ -402,20 +555,25 @@
 
     function tick(timestamp) {
       if (state.status !== 'running') return;
-      // Bound catch-up after a stall and split the work so narrow obstacles remain hittable.
-      let remaining = previousTime === undefined ? 0 : clamp((timestamp - previousTime) / 1000, 0, 0.20);
+      let remaining = previousTime === undefined ? 0 : Math.max(0, (timestamp - previousTime) / 1000);
       previousTime = timestamp;
-      while (remaining > 0.00001 && state.health > 0) {
+      if (state.phase === 'starting') {
+        const step = Math.min(remaining, INTRO_SECONDS - phaseTime);
+        advanceIntro(step);
+        remaining -= step;
+      }
+      // Bound physics catch-up and substep collisions, while keeping the shots on real time.
+      if (state.phase === 'driving') remaining = Math.min(remaining, .20);
+      while (remaining > 0.00001 && state.phase === 'driving') {
         const step = Math.min(remaining, 1 / 40);
         advance(step);
         remaining -= step;
       }
-      if (state.health <= 0) {
-        // Hold the final score and the road still while the last barrier falls.
-        advanceClock(remaining);
-        if (state.time >= finishAt) {
+      if (state.phase === 'stopping') {
+        advanceStop(Math.min(remaining, OUTRO_SECONDS - phaseTime));
+        if (phaseTime >= OUTRO_SECONDS) {
           state.status = 'finished';
-          audio.effect('finish');
+          audio.setDriving(false);
           onUpdate(state);
           onFinish(state);
           return;
@@ -428,8 +586,8 @@
     function beginFrames() {
       previousTime = undefined;
       state.status = 'running';
-      audio.update(state);
-      audio.setDriving(state.health > 0);
+      if (state.phase !== 'stopping') audio.update(state);
+      audio.setDriving(true);
       onUpdate(state);
       frameId = requestAnimationFrame(tick);
     }
@@ -439,10 +597,20 @@
       start() {
         cancelAnimationFrame(frameId);
         Object.assign(state, startingState());
-        wave = objectId = bonus = nextAudio = steeringInput = finishAt = 0;
+        wave = objectId = bonus = nextAudio = steeringInput = phaseTime = 0;
+        if (!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+          state.phase = 'starting';
+          state.introProgress = state.speed = 0;
+          state.gear = 1;
+          state.rpm = 850;
+          // Start just behind the line so the first obstacle stays far ahead at handover.
+          state.roadZ = -LAUNCH_SPEED * (INTRO_SECONDS - LAUNCH_WAIT) / 7.2;
+          state.worldHeading = Math.atan(roadSlope(state.roadZ));
+        }
         nextWave = 55;
         fillRoad();
         beginFrames();
+        audio.horn();
       },
       pause() {
         if (state.status !== 'running') return;
@@ -455,11 +623,16 @@
       resume() {
         if (state.status === 'paused') beginFrames();
       },
+      endRun() {
+        if (state.status !== 'running' && state.status !== 'paused') return;
+        beginStop();
+        if (state.status === 'paused') beginFrames();
+      },
       steer(value) {
-        steeringInput = state.status === 'running' && state.health > 0 && Number.isFinite(value) ? clamp(value, -1, 1) : 0;
+        steeringInput = state.status === 'running' && state.phase !== 'stopping' && Number.isFinite(value) ? clamp(value, -1, 1) : 0;
       },
       brake(pressed) {
-        state.braking = state.status === 'running' && state.health > 0 && Boolean(pressed);
+        if (state.phase !== 'stopping') state.braking = state.status === 'running' && Boolean(pressed);
       },
       setSound: audio.setEnabled,
       setVolume: audio.setVolume,

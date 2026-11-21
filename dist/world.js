@@ -209,28 +209,30 @@
     B:['110','101','110','101','110'], S:['111','100','111','001','111'],
     '0':['111','101','101','101','111'], '3':['111','001','111','001','111']
   };
-  function lettering(m,str,cx,cy,z,pixel,col) {
-    const start=cx-(str.length*4-1)*pixel/2;
+  function lettering(m,str,cx,cy,z,pixel,col,direction=1) {
+    const width=(str.length*4-1)*pixel;
     Array.from(str).forEach((ch,c) => glyphs[ch].forEach((row,y) => Array.from(row).forEach((v,x) => {
-      if(v==='1') m.quad([start+(c*4+x)*pixel,cy-y*pixel,z],[start+(c*4+x+1)*pixel,cy-y*pixel,z],
-        [start+(c*4+x+1)*pixel,cy-(y+1)*pixel,z],[start+(c*4+x)*pixel,cy-(y+1)*pixel,z],col);
+      if(v!=='1') return;
+      const left=cx+direction*((c*4+x)*pixel-width/2), right=left+direction*pixel;
+      m.quad([left,cy-y*pixel,z],[right,cy-y*pixel,z],[right,cy-(y+1)*pixel,z],[left,cy-(y+1)*pixel,z],col);
     })));
   }
 
-  function wheel(m,side,z) {
+  function wheel(m,side,z,segments=14) {
     const x=side*1.16, y=.52;
     const loop=(offset,rad,col) => {
       const a=x+side*offset;
-      for(let i=0;i<14;i++) {
-        const u=i*TAU/14, v=(i+1)*TAU/14;
+      for(let i=0;i<segments;i++) {
+        const u=i*TAU/segments, v=(i+1)*TAU/segments;
         m.tri([a,y,z],[a,y+rad*Math.cos(u),z+rad*Math.sin(u)],[a,y+rad*Math.cos(v),z+rad*Math.sin(v)],col);
       }
     };
-    for(let i=0;i<14;i++) {
-      const u=i*TAU/14,v=(i+1)*TAU/14, ax=x+side*.12, bx=x-side*.17;
+    for(let i=0;i<segments;i++) {
+      const u=i*TAU/segments,v=(i+1)*TAU/segments, ax=x+side*.12, bx=x-side*.17;
       m.quad([ax,y+.46*Math.cos(u),z+.46*Math.sin(u)],[bx,y+.46*Math.cos(u),z+.46*Math.sin(u)],[bx,y+.46*Math.cos(v),z+.46*Math.sin(v)],[ax,y+.46*Math.cos(v),z+.46*Math.sin(v)],'#35444b');
     }
-    loop(.12,.46,'#313d44'); loop(.125,.28,'#dfd8bb'); loop(.13,.18,'#75888a'); loop(.135,.095,'#cfd8ce');
+    loop(.12,.46,'#313d44'); loop(.125,.28,'#dfd8bb');
+    if(segments>8) { loop(.13,.18,'#75888a'); loop(.135,.095,'#cfd8ce'); }
   }
 
   function bus(lowDetail = false) {
@@ -238,44 +240,45 @@
     // Canvas draws exterior trim after the body and luggage after the rack.
     // A triangle's centre depth alone cannot order small decals on a long face.
     const layers = [];
-    const mark = (layer, side=0) => {
-      if (lowDetail) layers.push({offset:m.data.length, layer, side});
+    const mark = (layer, side=0, end=0) => {
+      if (lowDetail) layers.push({offset:m.data.length, layer, side, end});
     };
     m.layers = layers;
     m.shell([[1.02,.34,2.40,.16],[1.16,.52,2.57,.22],[1.18,1.35,2.61,.25]],'#d84b3a');
     m.shell([[1.181,1.32,2.611,.25],[1.185,1.54,2.614,.25]],'#fff0ce');
     m.shell([[1.181,1.53,2.611,.25],[1.17,1.65,2.59,.25],[1.13,2.66,2.49,.25]],'#fff8df');
     m.shell([[1.14,2.61,2.51,.25],[1.16,2.73,2.53,.28],[1.04,2.9,2.37,.34],[.9,2.94,2.25,.32]],'#f7edd1');
-    mark(1);
+    mark(1,0,-1);
     m.box(0,.54,-2.609,2.14,.135,.16,'#d3d5bf');
     m.box(0,.51,-2.68,1.4,.047,.04,'#82918d');
-    function rearPanel(x,y,w,h,r,z,col) {
-      if (lowDetail) {
+    function panel(x,y,w,h,r,z,col) {
+      if (lowDetail && z<0) {
         m.quad([x-w/2,y-h/2,z],[x+w/2,y-h/2,z],[x+w/2,y+h/2,z],[x-w/2,y+h/2,z],col);
         return;
       }
       const ring=[];
+      const steps=lowDetail?1:3;
       for(const [dx,dy,start] of [[1,1,0],[-1,1,.25],[-1,-1,.5],[1,-1,.75]]) {
-        for(let j=0;j<=3;j++) {
-          const a=(start+j/12)*TAU;
+        for(let j=0;j<=steps;j++) {
+          const a=(start+j/(4*steps))*TAU;
           ring.push([x+dx*(w/2-r)+r*Math.cos(a),y+dy*(h/2-r)+r*Math.sin(a),z]);
         }
       }
       for(let j=0;j<ring.length;j++) m.tri([x,y,z],ring[j],ring[(j+1)%ring.length],col);
     }
-    rearPanel(0,2.073,2.03,.83,.13,-2.621,'#d0c6aa');
-    rearPanel(0,2.073,1.96,.77,.105,-2.638,'#3b4f59');
-    for(const dir of [-1,1]) rearPanel(dir*.47,2.075,.85,.651,.07,-2.648,'#538294');
+    panel(0,2.073,2.03,.83,.13,-2.621,'#d0c6aa');
+    panel(0,2.073,1.96,.77,.105,-2.638,'#3b4f59');
+    for(const dir of [-1,1]) panel(dir*.47,2.075,.85,.651,.07,-2.648,'#538294');
     for(const k of [-.865,.075]) {
       m.quad([k,2.29,-2.651],[k+.57,2.29,-2.651],[k+.70,2.36,-2.651],[k+.11,2.36,-2.651],'#83a8b0');
     }
-    rearPanel(0,2.604,.63,.232,.07,-2.64,'#decbad');
-    rearPanel(0,2.604,.58,.197,.055,-2.652,'#374b50');
+    panel(0,2.604,.63,.232,.07,-2.64,'#decbad');
+    panel(0,2.604,.58,.197,.055,-2.652,'#374b50');
     lettering(m,'03',0,2.67,-2.658,.029,'#ffdf89');
     m.box(0,.76,-2.622,.58,.2,.045,'#ffdb89');
     if (!lowDetail) lettering(m,'BS3',0,.917,-2.648,.0205,'#455257');
     for(const s of [-1,1]) {
-      mark(1);
+      mark(1,0,-1);
       m.box(s*.93,.78,-2.61,.215,.34,.08,'#703d38');
       m.box(s*.93,.94,-2.658,.16,.106,.021,'#ffc66a');
       m.box(s*.93,.82,-2.658,.16,.10,.021,'#fb7760');
@@ -286,15 +289,33 @@
         m.box(s*1.19,1.77,z,.02,.66,.73,'#5d98a4');
         m.box(s*1.203,2.19,z,.014,.19,.72,'#77aeb7');
       }
-      for(const z of [-1.55,1.54]) {
-        if (lowDetail) m.box(s*1.14,.08,z,.24,.77,.79,'#35444b');
-        else wheel(m,s,z);
-      }
+      for(const z of [-1.55,1.54]) wheel(m,s,z,lowDetail?8:14);
       m.box(s*1.25,2.1,1.77,.27,.055,.09,'#586a68');
       m.box(s*1.39,2.01,1.77,.11,.25,.15,'#52666a');
     }
-    mark(1);
+    mark(1,0,-1);
     for(let i=0;i<4;i++) m.box(.56,1.00+i*.077,-2.622,.52,.024,.018,'#b34b3d');
+    // A destination blind, split windscreen and warm headlamps face the direction of travel.
+    mark(1,0,1);
+    panel(0,2.08,2.02,.94,.13,2.621,'#bcb99f');
+    panel(0,2.08,1.96,.89,.11,2.634,'#394e55');
+    for(const side of [-1,1]) {
+      const x=side*.476;
+      panel(x,2.08,.896,.785,.085,2.641,'#639aa4');
+      m.quad([x-.40,2.16,2.646],[x+.23,2.43,2.646],[x+.40,2.43,2.646],[x-.06,2.16,2.646],'#91bdbe');
+      m.quad([x-.34,1.75,2.652],[x-.32,1.72,2.652],[x+.28,1.91,2.652],[x+.28,1.95,2.652],'#344e53');
+      panel(side*.82,1.06,.38,.29,.135,2.622,'#9b5547');
+      panel(side*.82,1.06,.31,.233,.11,2.633,'#efe6c5');
+      panel(side*.82,1.07,.235,.16,.075,2.645,'#fff3b7');
+      panel(side*.9,1.30,.15,.09,.04,2.626,'#ffc169');
+    }
+    panel(0,2.694,.70,.245,.09,2.555,'#415451');
+    lettering(m,'03',0,2.78,2.562,.036,'#ffdd83',-1);
+    panel(0,1.15,.65,.20,.085,2.627,'#a04236');
+    for(const y of [1.10,1.16,1.22]) panel(0,y,.53,.019,.008,2.634,'#ebbe96');
+    m.box(0,.55,2.608,2.13,.15,.17,'#dddac3');
+    panel(0,.815,.51,.15,.025,2.637,'#f2d490');
+    lettering(m,'BS3',0,.865,2.641,.020,'#4c5755',-1);
     mark(2);
     for(const s of [-1,1]) {
       m.box(s*.77,2.94,.23,.055,.13,2.26,'#838f88');
@@ -458,12 +479,33 @@
     const framing = Math.max(1, .70 / aspect);
     const back = 11.8 * framing;
     const follow = .22 * LANE * (state.laneX || 0);
-    return {
+    const chase = {
       cx: roadX(distance) + follow - Math.sin(a) * back,
       cy: 14.2 * framing,
       cz: distance - Math.cos(a) * back,
       a, f: FOCAL_LENGTH, pitch: CAMERA_PITCH, aspect
     };
+    if (!(state.introProgress < 1)) return chase;
+    const t = Math.max(0,state.introProgress);
+    const sweep = t*t*t*(t*(6*t-15)+10);
+    const remaining = 1-sweep;
+    // Orbit a point just inside the windscreen, then open the shot and lift the
+    // sightline until position and tangent meet the normal chase camera.
+    const angle = a + (Math.PI-.39)*remaining;
+    const frontRadius = Math.max(4.65,1.38+2.9/aspect);
+    const radius = frontRadius*remaining + back*sweep;
+    const pivotX = roadX(distance) + follow*sweep + ((state.laneX||0)*LANE + Math.sin(a)*1.35)*remaining;
+    const pivotZ = distance + Math.cos(a)*1.35*remaining;
+    const y = 2.00*remaining + chase.cy*sweep;
+    const chaseSightline = chase.cy - Math.tan(CAMERA_PITCH)*back;
+    const aimY = 1.52 + (chaseSightline-1.52)*sweep*sweep;
+    return {cx:pivotX-Math.sin(angle)*radius, cy:y, cz:pivotZ-Math.cos(angle)*radius,
+      a:angle, f:FOCAL_LENGTH, pitch:Math.atan2(y-aimY,radius), aspect};
+  }
+
+  function brakingPitch(state) {
+    if (!(state.stopProgress > 0 && state.stopProgress < 1)) return 0;
+    return .032*Math.sin(state.stopProgress*Math.PI*1.28)*(1-state.stopProgress);
   }
 
   const vertexCode = `
@@ -612,8 +654,13 @@
         gl.drawArrays(gl.TRIANGLES,0,mesh.n);
         if(fadeSolid) gl.depthFunc(gl.LESS);
       }
+      const intro=s.introProgress<1;
       draw(range,0,-15,d);
-      const start=Math.floor((cam.cz-5)/CHUNK),end=Math.floor((d+FAR)/CHUNK);
+      if(intro) {
+        draw(range,0,-15,d,Math.PI*.5);
+        draw(range,0,-15,d,Math.PI);
+      }
+      const start=Math.floor((intro ? d-FAR : cam.cz-5)/CHUNK),end=Math.floor((d+FAR)/CHUNK);
       for(let idx=start;idx<=end;idx++) {
         if(!chunks.has(idx)) chunks.set(idx,upload(section(idx)));
         draw(chunks.get(idx),0,0,idx*CHUNK);
@@ -628,12 +675,12 @@
         draw(items[o.type],x,pickup?Math.sin(t*3+z*.06)*.12:0,z,a+(pickup?.29*Math.sin(t*2.5+z*.17):0));
       }
       const x=roadX(d)+lane*LANE;
-      const a=cam.a+(s.heading||0);
+      const a=Math.atan(roadSlope(d))+(s.heading||0);
       const speed=Math.min(1,(s.speed||0)/70);
-      const roll=(s.steer||0)*.072+(s.flat?.044+Math.sin(d*1.6)*.013:0)+(s.hit ? Math.sin(t*26)*.035:0);
+      const roll=(s.steer||0)*.072+(s.flat?.044+Math.sin(d*1.6)*.013:0)+(s.hit ? Math.sin(t*26)*.035*speed:0);
       draw(shadow,x+.13,.018,d+.12,a);
       if(s.boost) draw(trail,x,.12,d+.16*Math.sin(t*16),a);
-      draw(coach,x,.035+Math.sin(d*1.05)*speed*.018+(s.flat?0:Math.cos(d*.73)*.008),d,a,roll);
+      draw(coach,x,.035+Math.sin(d*1.05)*speed*.018+(s.flat?0:Math.cos(d*.73)*.008),d,a,roll,brakingPitch(s));
       if(s.impacts?.length) {
         gl.enable(gl.BLEND);
         gl.blendFuncSeparate(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA,gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
@@ -668,11 +715,11 @@
     const fadeContext = fadeCanvas.getContext('2d');
     function faces(m) {
       const out=[];
-      let group=0, layer=0, side=0;
+      let group=0, layer=0, side=0, end=0;
       for(let i=0;i<m.data.length;i+=18) {
         const d=m.data;
-        while (m.layers?.[group]?.offset===i) ({layer,side}=m.layers[group++]);
-        out.push({layer,side,v:[[d[i],d[i+1],d[i+2]],[d[i+6],d[i+7],d[i+8]],[d[i+12],d[i+13],d[i+14]]],
+        while (m.layers?.[group]?.offset===i) ({layer,side,end}=m.layers[group++]);
+        out.push({layer,side,end,v:[[d[i],d[i+1],d[i+2]],[d[i+6],d[i+7],d[i+8]],[d[i+12],d[i+13],d[i+14]]],
           col:'rgb('+[d[i+3],d[i+4],d[i+5]].map(c=>Math.min(255,Math.round(c*255))).join(',')+')'});
       }
       return out;
@@ -694,8 +741,9 @@
         for(let i=1;i<points.length;i++) target.lineTo(points[i][0],points[i][1]);
         target.closePath();target.fill();
       }
-      const near=c.cz+1.7, far=d+FAR, zs=Math.floor(far/4)*4;
-      const groundLine=point(roadX(zs+4),0,zs+4)[1];
+      const intro=s.introProgress<1;
+      const near=intro ? d-FAR : c.cz+1.7, far=d+FAR, zs=Math.floor(far/4)*4;
+      const groundLine=point(c.cx+sn*FAR,0,c.cz+cs*FAR)[1];
       const sky=ctx.createLinearGradient(0,0,0,groundLine);
       sky.addColorStop(0,'#abaaca');sky.addColorStop(1,'#ffcb98');
       ctx.fillStyle=sky;ctx.fillRect(0,0,w,h);
@@ -710,16 +758,43 @@
         ctx.lineTo(w,base+5);ctx.lineTo(0,base+5);ctx.fill();
       }
       ctx.fillStyle='#afba6d';ctx.fillRect(0,groundLine,w,h-groundLine);
-      for(let z=zs;z>=near-4;z-=4) {
-        const a=Math.max(z,near), b=z+4;
-        const strip=(l,r,y,col)=>polygon([point(roadX(a)+l,y,a),point(roadX(a)+r,y,a),point(roadX(b)+r,y,b),point(roadX(b)+l,y,b)],col);
-        strip(-ROAD-.65,ROAD+.65,-.01,'#d6bf86');
-        strip(-ROAD,ROAD,0,'#595564');
-        for(const side of [-1,1]) {
-          const x=side*(ROAD-.16);
-          strip(x-.06,x+.06,.02,'#f7db8c');
-          if(Math.abs(z/4%3)===0) strip(side*LANE*.5-.09,side*LANE*.5+.09,.02,'#fcf8de');
+      function appendRoadStrip(a,b,l,r,y) {
+        const ax=roadX(a), bx=roadX(b);
+        const points=[point(ax+l,y,a),point(ax+r,y,a),point(bx+r,y,b),point(bx+l,y,b)];
+        let visible=points;
+        if (!points.every(p=>p[2]>.25)) {
+          if (!intro || points.every(p=>p[2]<=.25)) return;
+          // A side-facing camera can straddle the road. Clip its crossing edges
+          // in world space before projecting them.
+          const vertices=[[ax+l,y,a],[ax+r,y,a],[bx+r,y,b],[bx+l,y,b]];
+          visible=[];
+          for(let i=0;i<4;i++) {
+            const j=(i+1)%4, start=points[i][2], finish=points[j][2];
+            if(start>.25) visible.push(points[i]);
+            if((start>.25)!==(finish>.25)) {
+              const ratio=(.25-start)/(finish-start);
+              visible.push(point(vertices[i][0]+(vertices[j][0]-vertices[i][0])*ratio,y,
+                vertices[i][2]+(vertices[j][2]-vertices[i][2])*ratio));
+            }
+          }
         }
+        ctx.moveTo(visible[0][0],visible[0][1]);
+        for(let i=1;i<visible.length;i++) ctx.lineTo(visible[i][0],visible[i][1]);
+        ctx.closePath();
+      }
+      function ribbon(l,r,y,color,dashed=false) {
+        ctx.fillStyle=color;ctx.beginPath();
+        for(let z=zs;z>=near-4;z-=4) {
+          if(!dashed || z%12===0) appendRoadStrip(Math.max(z,near),z+4,l,r,y);
+        }
+        ctx.fill();
+      }
+      ribbon(-ROAD-.65,ROAD+.65,-.01,'#d6bf86');
+      ribbon(-ROAD,ROAD,0,'#595564');
+      for(const side of [-1,1]) {
+        const x=side*(ROAD-.16);
+        ribbon(x-.06,x+.06,.02,'#f7db8c');
+        ribbon(side*LANE*.5-.09,side*LANE*.5+.09,.02,'#fcf8de',true);
       }
       function model(type,x,y,z,yaw,roll,pitch=0,sx=1,sy=1,sz=1,alpha=1) {
         const source=cars.get(type);
@@ -727,14 +802,24 @@
         const cy=Math.cos(yaw),snYaw=Math.sin(yaw),cr=Math.cos(roll),sr=Math.sin(roll),tris=[];
         const cpitch=Math.cos(pitch),spitch=Math.sin(pitch);
         const cameraSide=((c.cx-x)*cy-(c.cz-z)*snYaw)*cr+(c.cy-y)*sr;
+        const cameraEnd=(c.cx-x)*snYaw+(c.cz-z)*cy;
         for(const f of source) {
           if (f.side && f.side*cameraSide<1.1) continue;
+          if (f.end && f.end*cameraEnd<2.5) continue;
           const p=f.v.map(([vx,vy,vz])=>{
             const py=vy*sy*cpitch-vz*sz*spitch,pz=vy*sy*spitch+vz*sz*cpitch;
             const lx=vx*sx*cr-py*sr;
             return point(x+lx*cy+pz*snYaw,y+vx*sx*sr+py*cr,z-lx*snYaw+pz*cy);
           });
-          if(p.every(v=>v[2]>.2)) tris.push({p,layer:f.layer,z:p[0][2]+p[1][2]+p[2][2],col:f.col});
+          if(p.every(v=>v[2]>.2)) {
+            const layer=f.layer>=2 && c.cy-y<2.94 ? f.layer-4 : f.layer;
+            // Layer coplanar glass and trim by their outward offset. Centre
+            // depth alone splits a reflection in two on a three-quarter view.
+            let depth=p[0][2]+p[1][2]+p[2][2];
+            if(f.end) depth=-f.end*(f.v[0][2]+f.v[1][2]+f.v[2][2]);
+            if(f.side) depth=-f.side*(f.v[0][0]+f.v[1][0]+f.v[2][0]);
+            tris.push({p,layer,z:depth,col:f.col});
+          }
         }
         tris.sort((a,b)=>a.layer-b.layer||b.z-a.z);
         if (alpha>=1) {
@@ -803,7 +888,7 @@
             }
             polygon(shadow,'#414c55');
           }
-          model(a.type,a.x,bus?.025:0,a.z,yaw,roll);
+          model(a.type,a.x,bus?.025:0,a.z,yaw,roll,bus?brakingPitch(s):0);
         }
       }
     }

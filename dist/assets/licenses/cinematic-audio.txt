@@ -1,0 +1,22 @@
+Bus Station 3 — Crédits audio
+
+Klaxon de départ (departure-horn.wav)
+« horn_bike » de loganzsound, publié sur Freesound le 11 décembre 2024.
+https://freesound.org/people/loganzsound/sounds/774253/
+CC0 1.0 Universal — https://creativecommons.org/publicdomain/zero/1.0/
+L’adaptation pour le jeu raccourcit l’extrait et le convertit en mono à
+24 kHz avec une égalisation douce, des fondus et un niveau atténué.
+
+Frein pneumatique (air-brake.wav)
+« Bus, Air Brake, A.wav » de InspectorJ (https://www.jshaw.co.uk/),
+publié sur Freesound le 4 octobre 2016.
+https://freesound.org/people/InspectorJ/sounds/361546/
+Creative Commons Attribution 4.0 International (CC BY 4.0)
+https://creativecommons.org/licenses/by/4.0/
+L’adaptation pour le jeu raccourcit l’extrait et le convertit en mono à
+24 kHz avec une égalisation douce, des fondus et un niveau atténué.
+
+Moteur (bus-engine.wav)
+« Bus Motor/Engine Sound Loop » de qubodup, publié sous CC0 1.0.
+https://freesound.org/people/qubodup/sounds/54909/
+La notice détaillée figure dans bus-engine.txt.
