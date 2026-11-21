@@ -24,7 +24,7 @@
 
   function makeSound() {
     const engineUrl = 'assets/bus-engine.wav';
-    const engineLevel = 0.5;
+    const engineLevel = 0.25;
     const fullScaleGain = 0.45;
     let masterGain = fullScaleGain * 0.6;
     let ctx, master, motor, engineGain, engineBuffer, media;
