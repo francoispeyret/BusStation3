@@ -213,9 +213,10 @@
     let slideDirection = 1;
     let finishAt = 0;
 
-    function emit(type, message) {
-      audio.effect(type);
-      onEvent({ type, message }, state);
+    function emit(type, message, points = 0) {
+      bonus += points;
+      if (type !== 'dodge') audio.effect(type);
+      onEvent({ type, message, points }, state);
     }
 
     function addObject(lane, z, type) {
@@ -254,21 +255,19 @@
         state.health = Math.min(3, state.health + 1);
         state.flat = false;
         state.slip = 0;
-        bonus += 70;
-        emit(type, 'Réparation +70');
+        emit(type, 'Réparation', 70);
         return;
       }
       if (type === 'boost') {
         state.boost = 4.2;
-        bonus += 100;
-        emit(type, 'Turbo +100');
+        emit(type, 'Turbo', 100);
         return;
       }
       if (type === 'oil') {
         state.slip = 1.6;
         slideDirection = Math.random() < 0.5 ? -1 : 1;
         state.speed *= 0.8;
-        emit(type, 'Ça glisse !');
+        emit(type, 'Flaque d’eau');
         return;
       }
       if (type === 'cone') {
@@ -281,7 +280,7 @@
       if (type === 'pothole') state.flat = true;
       else state.hit = 0.65;
       state.speed = Math.max(28, state.speed * (type === 'barrier' ? 0.52 : 0.68));
-      const message = type === 'pothole' ? 'Pneu crevé !' : 'Choc sur la barrière !';
+      const message = type === 'pothole' ? 'Nid-de-poule · −1 cœur' : 'Barrière · −1 cœur';
       emit(type, message);
       if (state.health === 0) {
         finishAt = state.time + (IMPACT_DURATIONS[type] || 0);
@@ -345,11 +344,11 @@
       state.lapProgress = (state.distance % LAP_METRES) / LAP_METRES;
       if (lap > state.lap) {
         state.lap = lap;
-        bonus += 250;
-        emit('lap', 'Tour ' + lap + ' · +250');
+        emit('lap', 'Tour ' + lap, 250);
       }
 
       const busX = roadX(state.roadZ) + state.laneX * LANE_WIDTH;
+      let dodgePoints = 0;
       for (const object of state.objects) {
         object.z -= travel;
         if (object.passed || object.z > 4.5 || state.health === 0) continue;
@@ -383,9 +382,10 @@
           encounter(object.type);
         } else if (object.z < -4.5) {
           object.passed = true;
-          if (!isPickup(object.type)) bonus += 10;
+          if (!isPickup(object.type)) dodgePoints += 10;
         }
       }
+      if (dodgePoints) emit('dodge', 'Esquive', dodgePoints);
       // Compact in place. The same array is shared with the renderer during a run.
       let count = 0;
       for (const object of state.objects) {

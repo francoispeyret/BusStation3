@@ -32,10 +32,25 @@
   const number = new Intl.NumberFormat('fr-FR');
   const cabinet = $('cabinet'), modal = $('modal'), title = $('modal-title'), body = $('modal-body');
   const road = $('road'), notice = $('notice'), effect = $('active-effect');
+  const noticeStatus = $('notice-status');
+  const impactTitles = {cone: 'Oups !', barrier: 'Boum !', oil: 'Ça glisse !', pothole: 'Crevé !'};
+  const pendingNotices = [];
+  let pendingDodge = null;
   const gauges = Object.fromEntries(['score','distance','lap','speed','tach','health'].map(key => [key, $(key)]));
+  const lapNumber = new Intl.NumberFormat('fr-FR', {minimumIntegerDigits: 2});
+  for (const dial of document.querySelectorAll('.reading number-flow')) {
+    if (typeof dial.update !== 'function') continue;
+    dial.locales = 'fr-FR';
+    if (dial === gauges.lap) dial.format = {minimumIntegerDigits: 2};
+    dial.transformTiming = {duration: 135, easing: 'ease-out'};
+    dial.opacityTiming = {duration: 90, easing: 'ease-out'};
+    dial.setAttribute('role', 'img');
+    setDial(dial, Number(dial.textContent), false);
+    dial.replaceChildren();
+  }
   const rankingPrefix = 'busstation3.result.';
   const memoryScores = new Map();
-  let renderer, view = 'home', panel = '', scoreId = '', scoreSaved = false, lastHud = -1, lastHealth = -1, noticeUntil = 0;
+  let renderer, view = 'home', panel = '', scoreId = '', scoreSaved = false, lastHud = -1, lastHealth = -1;
   const heldControls = new Map();
   let drag = null;
   let graphicsLost = false;
@@ -79,11 +94,24 @@
     refreshSound();
   }
   function setText(el, value) { if (el.textContent !== value) el.textContent = value; }
+  function setDial(dial, value, animate) {
+    const formatter = dial === gauges.lap ? lapNumber : number;
+    if (typeof dial.update !== 'function') {
+      setText(dial, formatter.format(value));
+      return;
+    }
+    dial.animated = animate;
+    if (dial.value !== value) {
+      dial.update(value);
+      dial.setAttribute('aria-label', formatter.format(value));
+    }
+  }
   function hud(state) {
-    setText(gauges.score, number.format(state.score));
-    setText(gauges.distance, number.format(Math.floor(state.distance)));
-    setText(gauges.lap, String(state.lap).padStart(2,'0'));
-    setText(gauges.speed, String(Math.round(state.speed)));
+    const rolling = state.status === 'running' && state.time > 0;
+    setDial(gauges.score, state.score, rolling);
+    setDial(gauges.distance, Math.floor(state.distance), rolling);
+    setDial(gauges.lap, state.lap, rolling);
+    setDial(gauges.speed, Math.round(state.speed), rolling);
     const rpm = state.rpm || 0;
     const bars = Math.round(Math.min(1,rpm / 4600) * 7);
     Array.from(gauges.tach.children).forEach((bar, index) => bar.classList.toggle('lit',index < bars));
@@ -103,14 +131,50 @@
   function update(state) {
     if (view !== 'run') return;
     renderer.render(state);
-    if (state.time - lastHud >= .08 || state.status === 'finished') { hud(state); lastHud = state.time; }
-    if (!notice.hidden && state.time > noticeUntil) notice.hidden = true;
+    if (state.time - lastHud >= .16 || state.status === 'finished') { hud(state); lastHud = state.time; }
   }
-  function event({message},state) {
-    notice.textContent = message;
-    notice.hidden = false;
-    noticeUntil = state.time + 1.25;
-    hud(state);
+  function showNotice({type, message, points}) {
+    const card = document.createElement('div');
+    card.className = 'notice-card';
+    const headline = document.createElement('strong');
+    headline.className = 'notice-headline';
+    headline.textContent = points ? '+' + number.format(points) : impactTitles[type];
+    if (points) {
+      const unit = document.createElement('small');
+      unit.textContent = 'pts';
+      headline.append(unit);
+    }
+    const caption = document.createElement('span');
+    caption.className = 'notice-caption';
+    caption.textContent = message;
+    card.append(headline, caption);
+    notice.dataset.type = type;
+    notice.replaceChildren(card);
+    noticeStatus.replaceChildren(points ? message + ' : +' + points + ' points' : impactTitles[type] + ' ' + message);
+  }
+  notice.addEventListener('animationend', e => {
+    if (e.target !== notice.firstElementChild) return;
+    if (pendingNotices.length) showNotice(pendingNotices.shift());
+    else if (pendingDodge) {
+      showNotice(pendingDodge);
+      pendingDodge = null;
+    } else notice.replaceChildren();
+  });
+  function clearNotices() {
+    pendingNotices.length = 0;
+    pendingDodge = null;
+    notice.replaceChildren();
+    noticeStatus.replaceChildren();
+  }
+  function event(feedback) {
+    if (!notice.firstElementChild || (notice.dataset.type === 'dodge' && feedback.type !== 'dodge')) {
+      showNotice(feedback);
+    } else if (feedback.type === 'dodge') {
+      if (pendingDodge) pendingDodge.points += feedback.points;
+      else pendingDodge = {...feedback};
+    } else pendingNotices.push(feedback);
+    // Refresh after the physics step has added all bonuses to the score.
+    lastHud = -1;
   }
   function showRun(active) {
     document.body.classList.toggle('in-race', active);
@@ -119,7 +183,7 @@
     $('run-info').hidden = !active;
     $('pause').hidden = !active;
     $('touch-controls').hidden = !active;
-    notice.hidden = true;
+    clearNotices();
     lastHud = -1;
   }
   function start() {
@@ -149,6 +213,7 @@
   }
   function openDialog(kind, symbol, heading, html) {
     releaseControls();
+    notice.classList.add('is-paused');
     panel = kind;
     title.textContent = heading;
     body.innerHTML = html;
@@ -169,6 +234,7 @@
     if (!focus.hidden) focus.focus({preventScroll:true});
   }
   function closeDialog() {
+    notice.classList.remove('is-paused');
     panel = '';
     if (modal.open) modal.close();
     $('scores-tab').classList.remove('selected');
@@ -190,6 +256,7 @@
   }
   function finish(state) {
     view = 'finish';
+    clearNotices();
     $('touch-controls').hidden = true;
     $('pause').hidden = true;
     hud(state);
