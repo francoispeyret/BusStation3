@@ -416,7 +416,6 @@ i[data-icon] {
 
 .line-one {
   font-size:1.09em;
-  gap:.17em;
 }
 
 .line-two {
@@ -440,34 +439,6 @@ i[data-icon] {
   color:#462738;
   text-shadow:none;
   box-shadow:0 3px 0 #ed8a53,0 6px 0 #9e4e4e,1px 9px 0 #372437;
-}
-
-.speedlines {
-  display:inline-flex;
-  flex-direction:column;
-  gap:.065em;
-  align-items:flex-start;
-  transform:skew(-23deg);
-  margin:.17em 0 0 .01em;
-}
-
-.speedlines i {
-  display:block;
-  background:var(--salmon);
-  height:.075em;
-  border-radius:1px;
-}
-
-.speedlines i:nth-child(1) {
-  width:.74em;
-}
-
-.speedlines i:nth-child(2) {
-  width:.54em;
-}
-
-.speedlines i:nth-child(3) {
-  width:.34em;
 }
 
 .home-copy p {
