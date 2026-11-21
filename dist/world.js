@@ -9,6 +9,28 @@
   const TAU = Math.PI * 2;
   const {roadX, roadSlope} = window.BusDrive;
   const colorCache = new Map();
+  const BEND_START = 24;
+  const BEND_RATE = .00095;
+  const outerBands = Array.from({length:14}, (_,i) => 88 + 24*i);
+  const meadowBands = [...outerBands.map(x => -x).reverse(),
+    ...Array.from({length:33}, (_,i) => (i-16)*4), ...outerBands];
+  const centreBand = (meadowBands.length-1)/2;
+
+  function groundBend(forward) {
+    const beyond = Math.max(0, forward-BEND_START);
+    return -BEND_RATE*beyond*beyond;
+  }
+
+  function meadowRise(offset, z) {
+    const t = Math.min(1, Math.max(0, (Math.abs(offset)-8.5)/32));
+    if (!t) return 0;
+    const side = Math.sign(offset);
+    const ridge = 4.4 + 1.7*Math.sin(z*.030 + side*1.5)
+      + 1.1*Math.cos(z*.018 + offset*.040) + .8*Math.sin(z*.048 - offset*.024);
+    return t*t*(3-2*t)*ridge;
+  }
+
+  function meadowHeight(x, z) { return meadowRise(x-roadX(z), z); }
 
   function rgb(hex) {
     if (!colorCache.has(hex)) {
@@ -113,12 +135,25 @@
 
   function section(index) {
     const m=new Mesh(), start=index*CHUNK, r=random(index+843);
+    // Cache the slope once per streamed section. One extra row on each end
+    // also grounds trees whose branches or shadows cross the section seam.
+    const rows = Array.from({length:CHUNK/4+3}, (_,i) => {
+      const z=(i-1)*4, worldZ=start+z;
+      return {x:roadX(worldZ), heights:meadowBands.map(x => meadowRise(x,worldZ))};
+    });
     function strip(z0,z1,l,r,y,col) {
       const a=roadX(start+z0),b=roadX(start+z1);
       m.quad([a+l,y,z0],[a+r,y,z0],[b+r,y,z1],[b+l,y,z1],col);
     }
     for(let z=0;z<CHUNK;z+=4) {
-      strip(z,z+4,-190,190,-.06,'#afba6d');
+      const a=rows[z/4+1], b=rows[z/4+2];
+      for (let i=0;i<meadowBands.length-1;i++) {
+        const l=meadowBands[i], u=meadowBands[i+1];
+        const al=a.heights[i], ar=a.heights[i+1], bl=b.heights[i], br=b.heights[i+1];
+        const light=1-.28*(ar-al)/(u-l)+.14*(bl-al)/4;
+        m.quad([a.x+l,al-.06,z],[a.x+u,ar-.06,z],[b.x+u,br-.06,z+4],
+          [b.x+l,bl-.06,z+4],'#afba6d',light);
+      }
       strip(z,z+4,-ROAD-.68,ROAD+.68,-.015,'#d6bf86');
       strip(z,z+4,-ROAD,ROAD,0,'#595564');
       for(const side of [-1,1]) {
@@ -127,6 +162,7 @@
       }
       if(z%12===0) for(const x of [-LANE/2,LANE/2]) strip(z,z+3.7,x-.08,x+.08,.015,'#ffe7b8');
     }
+    const firstProp=m.data.length;
     for (let i=0;i<32;i++) {
       const side=i%2 ? 1 : -1;
       const z=r()*CHUNK, gap=i<10 ? 4.8+r()*5 : 11+r()*38;
@@ -169,6 +205,19 @@
       m.box(x,2.27,z-.103,.4,.17,.02,'#4a8d9c');
       m.box(x+.1,0,z+2.6,1.9,.16,.51,'#b77e53');
       m.box(x+.1,.17,z+2.82,1.9,.43,.11,'#cb9770');
+    }
+    // Match the same two grass triangles used above so tree roots, shadows
+    // and rocks sit on the hillside, even between grid vertices.
+    for (let i=firstProp;i<m.data.length;i+=6) {
+      const x=m.data[i], z=m.data[i+2], cell=Math.floor(z/4), v=z/4-cell;
+      const a=rows[cell+1], b=rows[cell+2];
+      const offset=x-(a.x+(b.x-a.x)*v);
+      if (Math.abs(offset)<8) continue;
+      if (Math.abs(offset)>=64) { m.data[i+1]+=meadowHeight(x,start+z); continue; }
+      const col=Math.floor(offset/4), j=centreBand+col, u=offset/4-col;
+      m.data[i+1]+=u>=v
+        ? (1-u)*a.heights[j]+(u-v)*a.heights[j+1]+v*b.heights[j+1]
+        : (1-v)*a.heights[j]+(v-u)*b.heights[j]+u*b.heights[j+1];
     }
     return m;
   }
@@ -520,11 +569,13 @@
     void main() {
       vec3 w = offset + model * aPos;
       float forward = w.x*cameraAngles.y + w.z*cameraAngles.x;
+      float beyond = max(0.0, forward - ${BEND_START.toFixed(1)});
+      w.y -= projection.z * beyond * beyond;
       float viewX = w.x*cameraAngles.x - w.z*cameraAngles.y;
       float viewY = w.y*cameraAngles.z + forward*cameraAngles.w;
       float depth = forward*cameraAngles.z - w.y*cameraAngles.w;
       gl_Position = vec4(viewX*projection.x,viewY*projection.y,depth*1.0018 - .56, depth);
-      float fog = smoothstep(58.0,278.0,depth)*.44;
+      float fog = smoothstep(55.0,255.0,forward)*.48;
       color = mix(aColor*lighting,vec3(.91,.77,.67),fog);
     }`;
   const fragmentCode=`precision mediump float; varying lowp vec3 color; uniform lowp float opacity;
@@ -628,7 +679,8 @@
       gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0); gl.drawArrays(gl.TRIANGLES,0,3);
       gl.useProgram(scene); gl.enable(gl.DEPTH_TEST);gl.enableVertexAttribArray(1);
       gl.uniform4f(uniform.cameraAngles,Math.cos(cam.a),Math.sin(cam.a),Math.cos(cam.pitch),Math.sin(cam.pitch));
-      gl.uniform3f(uniform.projection,cam.f/cam.aspect,cam.f,0);
+      // Distant mountains form a backdrop behind the rolling ground.
+      gl.uniform3f(uniform.projection,cam.f/cam.aspect,cam.f,BEND_RATE*.64);
       gl.uniform1f(uniform.lighting,1);
       gl.uniform1f(uniform.opacity,1);
       function draw(mesh,x,y,z,a=0,roll=0,pitch=0,sx=1,sy=1,sz=1,fadeSolid=false) {
@@ -657,9 +709,15 @@
       const intro=s.introProgress<1;
       draw(range,0,-15,d);
       if(intro) {
-        draw(range,0,-15,d,Math.PI*.5);
-        draw(range,0,-15,d,Math.PI);
+        // As the camera rises, move the lateral matte below the terrain so it
+        // joins the forward skyline without a cut on ultrawide views.
+        const settle=Math.max(0,2*s.introProgress-1);
+        const base=-15-84*settle*settle;
+        draw(range,0,base,d,Math.PI*.5);
+        draw(range,0,base,d,Math.PI);
       }
+      gl.clear(gl.DEPTH_BUFFER_BIT);
+      gl.uniform3f(uniform.projection,cam.f/cam.aspect,cam.f,BEND_RATE);
       const start=Math.floor((intro ? d-FAR : cam.cz-5)/CHUNK),end=Math.floor((d+FAR)/CHUNK);
       for(let idx=start;idx<=end;idx++) {
         if(!chunks.has(idx)) chunks.set(idx,upload(section(idx)));
@@ -713,6 +771,9 @@
     const cars = new Map();
     const fadeCanvas = canvas.ownerDocument.createElement('canvas');
     const fadeContext = fadeCanvas.getContext('2d');
+    // A small horizon buffer replaces a per-pixel depth buffer in the software renderer.
+    const columns=32, stride=columns+1, depthStep=6, rows=Math.ceil(FAR/depthStep)+1;
+    const skyline=new Float32Array(stride*rows);
     function faces(m) {
       const out=[];
       let group=0, layer=0, side=0, end=0;
@@ -731,10 +792,12 @@
       if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}
       const c=camera(s,w/h), d=s.roadZ ?? s.distance ?? 0;
       const cs=Math.cos(c.a),sn=Math.sin(c.a),cp=Math.cos(c.pitch),sp=Math.sin(c.pitch);
+      const focal=h*.5*c.f;
       function point(x,y,z) {
-        const dx=x-c.cx,dy=y-c.cy,dz=z-c.cz,forward=dx*sn+dz*cs,depth=forward*cp-dy*sp;
-        const scale=h*.5*c.f/Math.max(.2,depth);
-        return [w*.5+(dx*cs-dz*sn)*scale,h*.5-(dy*cp+forward*sp)*scale,depth];
+        const dx=x-c.cx,dz=z-c.cz,forward=dx*sn+dz*cs;
+        const dy=y-c.cy+groundBend(forward),depth=forward*cp-dy*sp;
+        const scale=focal/Math.max(.2,depth);
+        return [w*.5+(dx*cs-dz*sn)*scale,h*.5-(dy*cp+forward*sp)*scale,depth,forward];
       }
       function polygon(points,col,target=ctx) {
         target.fillStyle=col;target.beginPath();target.moveTo(points[0][0],points[0][1]);
@@ -743,21 +806,57 @@
       }
       const intro=s.introProgress<1;
       const near=intro ? d-FAR : c.cz+1.7, far=d+FAR, zs=Math.floor(far/4)*4;
-      const groundLine=point(c.cx+sn*FAR,0,c.cz+cs*FAR)[1];
-      const sky=ctx.createLinearGradient(0,0,0,groundLine);
+      // Sample the closest visible ridge in each screen column, front to back.
+      // Its depth history clips distant crowns even when a bank crosses the road in perspective.
+      skyline.fill(h+focal,0,stride);
+      for(let row=1;row<rows;row++) {
+        const q=row*depthStep, base=groundBend(q)-c.cy, baseDepth=q*cp-base*sp;
+        const x0=c.cx+q*sn,z0=c.cz+q*cs, offset=row*stride;
+        for(let col=0;col<=columns;col++) {
+          const slope=w*(col/columns-.5)/focal;
+          let right=slope*baseDepth;
+          let hill=meadowHeight(x0+right*cs,z0-right*sn);
+          // Refine the azimuth for a raised bank on a pitched camera.
+          if(hill>0) {
+            right=slope*(baseDepth-hill*sp);
+            hill=meadowHeight(x0+right*cs,z0-right*sn);
+          }
+          const dy=base+hill;
+          const screenY=h*.5-focal*(dy*cp+q*sp)/Math.max(.2,q*cp-dy*sp);
+          skyline[offset+col]=Math.min(skyline[offset-stride+col],screenY);
+        }
+      }
+      function crestAt(px,rowOffset) {
+        const col=Math.max(0,Math.min(columns,px*columns/w)), i=Math.min(columns-1,Math.floor(col));
+        const left=skyline[rowOffset+i];
+        return left+(skyline[rowOffset+i+1]-left)*(col-i);
+      }
+      function ridgeBefore(forward) {
+        return Math.max(0,Math.min(rows-1,Math.ceil(forward/depthStep)-1))*stride;
+      }
+      const farRidge=(rows-1)*stride,groundLine=skyline[farRidge+columns/2];
+      const roadCrest=Math.sqrt(BEND_START*BEND_START+c.cy/BEND_RATE);
+      const mountainBase=point(c.cx+roadCrest*sn,0,c.cz+roadCrest*cs)[1];
+      const sky=ctx.createLinearGradient(0,0,0,mountainBase);
       sky.addColorStop(0,'#abaaca');sky.addColorStop(1,'#ffcb98');
       ctx.fillStyle=sky;ctx.fillRect(0,0,w,h);
       for (let layer=0;layer<2;layer++) {
-        const base=groundLine+layer*2;
-        ctx.fillStyle=layer?'#929979':'#ae9aa9';ctx.beginPath();ctx.moveTo(0,base);
+        ctx.fillStyle=layer?'#929979':'#ae9aa9';ctx.beginPath();ctx.moveTo(-6,h);
         for(let x=-6;x<=w+6;x+=6) {
           const k=x/h*4.8+c.a*.8+layer*4;
           const relief=.065+.032*Math.cos(k)+.027*Math.sin(k*2.9)+.019*Math.cos(k*4.2);
-          ctx.lineTo(x,base-h*relief*(layer ? .45 : 1));
+          ctx.lineTo(x,mountainBase+layer*2-h*relief*(layer ? .45 : 1));
         }
-        ctx.lineTo(w,base+5);ctx.lineTo(0,base+5);ctx.fill();
+        ctx.lineTo(w+6,h);ctx.fill();
       }
-      ctx.fillStyle='#afba6d';ctx.fillRect(0,groundLine,w,h-groundLine);
+      const grass=ctx.createLinearGradient(0,groundLine-h*.04,0,groundLine+h*.30);
+      grass.addColorStop(0,'#acbc86');grass.addColorStop(1,'#afba6d');
+      ctx.fillStyle=grass;ctx.beginPath();ctx.moveTo(0,h);
+      for(let col=0;col<=columns;col++) ctx.lineTo(w*col/columns,skyline[farRidge+col]);
+      ctx.lineTo(w,h);ctx.fill();
+      function roadClearance(p) {
+        return Math.min((roadCrest-p[3])*focal/roadCrest,crestAt(p[0],ridgeBefore(p[3]))+.4-p[1]);
+      }
       function appendRoadStrip(a,b,l,r,y) {
         const ax=roadX(a), bx=roadX(b);
         const points=[point(ax+l,y,a),point(ax+r,y,a),point(bx+r,y,b),point(bx+l,y,b)];
@@ -777,6 +876,21 @@
                 vertices[i][2]+(vertices[j][2]-vertices[i][2])*ratio));
             }
           }
+        }
+        if(visible.some(p=>p[3]>depthStep)) {
+          const clipped=[];
+          let prev=visible[visible.length-1],prevEdge=roadClearance(prev);
+          for(const next of visible) {
+            const edge=roadClearance(next);
+            if((prevEdge>0)!==(edge>0)) {
+              const t=prevEdge/(prevEdge-edge);
+              clipped.push([prev[0]+(next[0]-prev[0])*t,prev[1]+(next[1]-prev[1])*t]);
+            }
+            if(edge>0) clipped.push(next);
+            prev=next;prevEdge=edge;
+          }
+          if(clipped.length<3) return;
+          visible=clipped;
         }
         ctx.moveTo(visible[0][0],visible[0][1]);
         for(let i=1;i<visible.length;i++) ctx.lineTo(visible[i][0],visible[i][1]);
@@ -849,7 +963,7 @@
         const z=n*8, r=random(n+463);
         for(const side of [-1,1]) {
           const x=roadX(z)+side*(ROAD+3.8+r()*12), size=3.5+r()*4;
-          actors.push({type:'tree',x,z,size,kind:r()<.53});
+          actors.push({type:'tree',x,y:meadowHeight(x,z),z,size,kind:r()<.53});
         }
       }
       for(const o of s.objects||[]) if(o.z>-7&&o.z<155) actors.push({type:o.type,x:roadX(d+o.z)+o.lane*LANE,z:d+o.z});
@@ -860,13 +974,27 @@
       });
       for (const a of actors) {
         const centerY=a.type==='bus' ? 1.4 : a.y||0;
-        a.depth=((a.x-c.cx)*sn+(a.z-c.cz)*cs)*cp-centerY*sp;
+        a.forward=(a.x-c.cx)*sn+(a.z-c.cz)*cs;
+        a.depth=a.forward*cp-(centerY+groundBend(a.forward))*sp;
       }
       actors.sort((a,b)=>Number(Boolean(b.ground))-Number(Boolean(a.ground))||b.depth-a.depth);
+      function clipToRidge(base,halfWidth) {
+        if(base[3]<depthStep) return false;
+        const row=ridgeBefore(base[3]);
+        if(base[1]<Math.min(crestAt(base[0]-halfWidth,row),crestAt(base[0],row),crestAt(base[0]+halfWidth,row))+.5) return false;
+        ctx.save();ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(w,0);
+        for(let col=columns;col>=0;col--) ctx.lineTo(w*col/columns,skyline[row+col]+.5);
+        ctx.closePath();ctx.clip();
+        return true;
+      }
       for(const a of actors) {
+        let clipped=false;
         if(a.type==='tree') {
-          const b=point(a.x,0,a.z),top=point(a.x,a.size,a.z),sh=b[1]-top[1];
+          const b=point(a.x,a.y,a.z),top=point(a.x,a.y+a.size,a.z),sh=b[1]-top[1];
           if(b[2]<1||sh<1||b[0]<-sh||b[0]>w+sh) continue;
+          const half=sh*.33, row=ridgeBefore(a.forward);
+          if(top[1]>Math.max(crestAt(b[0]-half,row),crestAt(b[0],row),crestAt(b[0]+half,row))+1) continue;
+          clipped=clipToRidge(b,half);
           ctx.fillStyle='#856a48';ctx.fillRect(b[0]-sh*.045,b[1]-.53*sh,.09*sh,.55*sh);
           if(a.kind) {
             polygon([[b[0],top[1]],[b[0]-.3*sh,b[1]-.24*sh],[b[0]+.29*sh,b[1]-.24*sh]],'#608261');
@@ -878,6 +1006,10 @@
           model(a.type,a.x,a.y,a.z,a.yaw,a.roll,a.pitch,a.sx,a.sy,a.sz,a.alpha);
         } else {
           const bus=a.type==='bus';
+          if(!bus) {
+            const base=point(a.x,0,a.z);
+            clipped=clipToRidge(base,focal*1.4/Math.max(1,base[2]));
+          }
           const yaw=Math.atan(roadSlope(a.z))+(bus ? s.heading||0 : 0);
           const roll=bus ? (s.steer||0)*.072+(s.flat ? .045 : 0) : 0;
           if (bus) {
@@ -890,6 +1022,7 @@
           }
           model(a.type,a.x,bus?.025:0,a.z,yaw,roll,bus?brakingPitch(s):0);
         }
+        if(clipped) ctx.restore();
       }
     }
     return {render,renderer:'Canvas 2D',dispose(){}};
