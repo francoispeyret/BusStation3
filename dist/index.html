@@ -8,10 +8,10 @@
   <title>Bus Station 3 · Arcade</title>
   <link rel="icon" href="assets/bus-mark.svg" type="image/svg+xml">
   <link rel="preload" href="assets/col-des-pins.webp" as="image">
-  <link rel="stylesheet" href="style.css?v=2">
-  <script src="drive.js?v=3" defer></script>
+  <link rel="stylesheet" href="style.css?v=4">
+  <script src="drive.js?v=4" defer></script>
   <script src="world.js?v=2" defer></script>
-  <script src="arcade.js?v=2" defer></script>
+  <script src="arcade.js?v=4" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -24,7 +24,13 @@
         <button id="arcade-tab" class="navitem selected" aria-label="Arcade" aria-current="page"><i data-icon="gamepad"></i><span>Arcade</span></button>
         <button id="scores-tab" class="navitem" aria-label="Classement" aria-haspopup="dialog"><i data-icon="trophy"></i><span>Classement</span></button>
       </nav>
-      <div class="sound-wrap"><button id="sound" class="sound" aria-pressed="true"><i data-icon="volume"></i><span>Son activé</span></button></div>
+      <div class="sound-wrap" id="header-audio">
+        <div class="audio-controls" id="audio-controls">
+          <button id="sound" class="sound" aria-label="Son activé" aria-pressed="true" title="Couper le son"><i data-icon="volume"></i></button>
+          <input id="volume" class="volume-range" type="range" min="0" max="100" step="1" value="60" aria-label="Volume du jeu" aria-valuetext="60 %">
+          <span class="volume-readout" id="volume-readout" aria-hidden="true">60 %</span>
+        </div>
+      </div>
     </div>
   </header>
   <main class="shell">

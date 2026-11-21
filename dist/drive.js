@@ -23,7 +23,8 @@
 
   function makeSound() {
     const engineUrl = 'assets/bus-engine.wav';
-    const masterVolume = 0.45;
+    const fullScaleGain = 0.45;
+    let masterGain = fullScaleGain * 0.6;
     let ctx, master, motor, engineGain, engineBuffer, media;
     let loading = false;
     let stopTimer;
@@ -34,13 +35,19 @@
     let enabled = true;
     let driving = false;
 
+    function syncVolume() {
+      if (master) master.gain.setTargetAtTime(enabled ? masterGain : 0, ctx.currentTime, 0.018);
+      if (media) {
+        media.volume = volume * masterGain;
+        media.muted = !enabled || !driving || masterGain === 0;
+      }
+    }
+
     function syncPlayback() {
       const audible = enabled && driving;
       clearTimeout(stopTimer);
-      if (master) master.gain.setTargetAtTime(enabled ? masterVolume : 0, ctx.currentTime, 0.018);
+      syncVolume();
       if (media) {
-        media.muted = !audible;
-        media.volume = volume * masterVolume;
         media.playbackRate = pitch;
         if (audible && media.paused) media.play().catch(() => {});
         if (!audible) media.pause();
@@ -126,6 +133,11 @@
     }
 
     return {
+      setVolume(value) {
+        if (!Number.isFinite(value)) return;
+        masterGain = fullScaleGain * clamp(value, 0, 1);
+        syncVolume();
+      },
       setEnabled(value) {
         enabled = Boolean(value);
         if (enabled && driving) unlock();
@@ -158,7 +170,7 @@
           engineGain.gain.setTargetAtTime(volume, ctx.currentTime, 0.06);
         } else if (media) {
           media.playbackRate = pitch;
-          media.volume = volume * masterVolume;
+          media.volume = volume * masterGain;
         }
       },
       effect(type) {
@@ -418,6 +430,7 @@
         state.braking = state.status === 'running' && Boolean(pressed);
       },
       setSound: audio.setEnabled,
+      setVolume: audio.setVolume,
       stop() {
         cancelAnimationFrame(frameId);
         state.status = 'stopped';

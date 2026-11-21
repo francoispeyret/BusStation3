@@ -39,18 +39,44 @@
   const heldControls = new Map();
   let drag = null;
   let graphicsLost = false;
+  const volumeSlider = $('volume');
+  let volume = Number(volumeSlider.defaultValue);
   let soundOn = true;
-  try { soundOn = localStorage.getItem('busstation3.sound') !== '0'; } catch {}
+  try {
+    soundOn = localStorage.getItem('busstation3.sound') !== '0';
+    const savedVolume = Number(localStorage.getItem('busstation3.volume'));
+    if (Number.isInteger(savedVolume) && savedVolume > 0 && savedVolume <= 100) volume = savedVolume;
+  } catch {}
   const game = window.BusDrive.create({ onUpdate: update, onEvent: event, onFinish: finish });
+  game.setVolume(volume / 100);
   game.setSound(soundOn);
 
   function refreshSound() {
     const control = $('sound');
-    const label = soundOn ? 'Son activé' : 'Son coupé';
-    control.innerHTML = icon(soundOn ? 'volume' : 'mute') + '<span>' + label + '</span>';
-    control.setAttribute('aria-pressed', String(soundOn));
-    control.setAttribute('aria-label', label);
+    if (control.getAttribute('aria-pressed') !== String(soundOn)) {
+      control.innerHTML = icon(soundOn ? 'volume' : 'mute');
+      control.setAttribute('aria-pressed', String(soundOn));
+    }
+    control.setAttribute('aria-label', soundOn ? 'Son activé' : 'Son coupé');
     control.title = soundOn ? 'Couper le son' : 'Activer le son';
+    const level = soundOn ? volume : 0;
+    volumeSlider.value = String(level);
+    volumeSlider.style.setProperty('--level', level + '%');
+    volumeSlider.setAttribute('aria-valuetext', level + ' %');
+    $('volume-readout').textContent = level + ' %';
+  }
+  function saveSound() {
+    try {
+      localStorage.setItem('busstation3.volume', String(volume));
+      localStorage.setItem('busstation3.sound', soundOn ? '1' : '0');
+    } catch {}
+  }
+  function setSoundEnabled(on) {
+    if (soundOn !== on) {
+      soundOn = on;
+      game.setSound(on);
+    }
+    refreshSound();
   }
   function setText(el, value) { if (el.textContent !== value) el.textContent = value; }
   function hud(state) {
@@ -251,16 +277,30 @@
   $('brand').addEventListener('click',enterArcade);
   $('scores-tab').addEventListener('click',() => scores());
   $('sound').addEventListener('click',() => {
-    soundOn = !soundOn;
-    game.setSound(soundOn);
-    try { localStorage.setItem('busstation3.sound',soundOn ? '1' : '0'); } catch {}
-    refreshSound();
+    setSoundEnabled(!soundOn);
+    saveSound();
+  });
+  volumeSlider.addEventListener('input', () => {
+    const level = volumeSlider.valueAsNumber;
+    if (level > 0) {
+      volume = level;
+      game.setVolume(level / 100);
+    }
+    setSoundEnabled(level > 0);
+  });
+  volumeSlider.addEventListener('change', saveSound);
+  volumeSlider.addEventListener('pointerup', () => {
+    if (game.state.status === 'running') cabinet.focus({preventScroll:true});
   });
   $('pause').addEventListener('click',pauseGame);
 
   const fullscreen = () => Boolean(document.fullscreenElement || cabinet.classList.contains('maximized'));
+  const audioControls = $('audio-controls');
+  const cornerActions = cabinet.querySelector('.corner-actions');
   function refreshSizeButton() {
     const full = fullscreen();
+    const audioParent = full ? cornerActions : $('header-audio');
+    if (audioControls.parentElement !== audioParent) audioParent.prepend(audioControls);
     $('expand').innerHTML = icon(full ? 'shrink' : 'expand');
     $('expand').title = full ? 'Quitter le plein écran' : 'Plein écran';
     $('expand').setAttribute('aria-label',$('expand').title);
