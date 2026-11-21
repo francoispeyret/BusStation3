@@ -7,8 +7,7 @@
   const LANE = 3.65;
   const ROAD = LANE * 1.5;
   const TAU = Math.PI * 2;
-  const roadX = z => 11 * Math.sin(z * .012) + 8 * Math.sin(z * .022 + .7);
-  const roadSlope = z => .132 * Math.cos(z * .012) + .176 * Math.cos(z * .022 + .7);
+  const {roadX, roadSlope} = window.BusDrive;
   const colorCache = new Map();
 
   function rgb(hex) {
@@ -234,15 +233,27 @@
     loop(.12,.46,'#313d44'); loop(.125,.28,'#dfd8bb'); loop(.13,.18,'#75888a'); loop(.135,.095,'#cfd8ce');
   }
 
-  function bus() {
+  function bus(lowDetail = false) {
     const m=new Mesh();
+    // Canvas draws exterior trim after the body and luggage after the rack.
+    // A triangle's centre depth alone cannot order small decals on a long face.
+    const layers = [];
+    const mark = (layer, side=0) => {
+      if (lowDetail) layers.push({offset:m.data.length, layer, side});
+    };
+    m.layers = layers;
     m.shell([[1.02,.34,2.40,.16],[1.16,.52,2.57,.22],[1.18,1.35,2.61,.25]],'#d84b3a');
     m.shell([[1.181,1.32,2.611,.25],[1.185,1.54,2.614,.25]],'#fff0ce');
     m.shell([[1.181,1.53,2.611,.25],[1.17,1.65,2.59,.25],[1.13,2.66,2.49,.25]],'#fff8df');
     m.shell([[1.14,2.61,2.51,.25],[1.16,2.73,2.53,.28],[1.04,2.9,2.37,.34],[.9,2.94,2.25,.32]],'#f7edd1');
+    mark(1);
     m.box(0,.54,-2.609,2.14,.135,.16,'#d3d5bf');
     m.box(0,.51,-2.68,1.4,.047,.04,'#82918d');
     function rearPanel(x,y,w,h,r,z,col) {
+      if (lowDetail) {
+        m.quad([x-w/2,y-h/2,z],[x+w/2,y-h/2,z],[x+w/2,y+h/2,z],[x-w/2,y+h/2,z],col);
+        return;
+      }
       const ring=[];
       for(const [dx,dy,start] of [[1,1,0],[-1,1,.25],[-1,-1,.5],[1,-1,.75]]) {
         for(let j=0;j<=3;j++) {
@@ -262,27 +273,35 @@
     rearPanel(0,2.604,.58,.197,.055,-2.652,'#374b50');
     lettering(m,'03',0,2.67,-2.658,.029,'#ffdf89');
     m.box(0,.76,-2.622,.58,.2,.045,'#ffdb89');
-    lettering(m,'BS3',0,.917,-2.648,.0205,'#455257');
+    if (!lowDetail) lettering(m,'BS3',0,.917,-2.648,.0205,'#455257');
     for(const s of [-1,1]) {
+      mark(1);
       m.box(s*.93,.78,-2.61,.215,.34,.08,'#703d38');
       m.box(s*.93,.94,-2.658,.16,.106,.021,'#ffc66a');
       m.box(s*.93,.82,-2.658,.16,.10,.021,'#fb7760');
+      mark(1,s);
       for(let j=0;j<4;j++) {
         const z=-1.67+j*1.03;
         m.box(s*1.129,1.68,z,.115,.85,.88,'#405962');
         m.box(s*1.19,1.77,z,.02,.66,.73,'#5d98a4');
         m.box(s*1.203,2.19,z,.014,.19,.72,'#77aeb7');
       }
-      for(const z of [-1.55,1.54]) wheel(m,s,z);
+      for(const z of [-1.55,1.54]) {
+        if (lowDetail) m.box(s*1.14,.08,z,.24,.77,.79,'#35444b');
+        else wheel(m,s,z);
+      }
       m.box(s*1.25,2.1,1.77,.27,.055,.09,'#586a68');
       m.box(s*1.39,2.01,1.77,.11,.25,.15,'#52666a');
     }
+    mark(1);
     for(let i=0;i<4;i++) m.box(.56,1.00+i*.077,-2.622,.52,.024,.018,'#b34b3d');
+    mark(2);
     for(const s of [-1,1]) {
       m.box(s*.77,2.94,.23,.055,.13,2.26,'#838f88');
       m.box(s*.77,3.08,.23,.059,.047,2.28,'#c7d0be');
     }
     for(let i=0;i<5;i++) m.box(0,2.982,-.85+i*.54,1.54,.05,.075,'#9aa8a0');
+    mark(3);
     m.box(-.30,3.048,-.30,.66,.31,.89,'#d6ac68');
     for(const z of [-.61,.00]) m.box(-.30,3.047,z,.67,.318,.055,'#9b714b');
     m.box(.35,3.045,.42,.53,.23,.72,'#75a399');
@@ -339,12 +358,22 @@
     return m;
   }
 
-  function camera(state,aspect) {
-    const d=state.distance||0, a=Math.atan(roadSlope(d)), lane=state.laneX||0;
-    const back=10.35+Math.max(0,1.13-aspect)*8;
-    const cx=roadX(d)-Math.sin(a)*back+lane*(.29+Math.max(0,1-aspect)*1.9);
-    const cz=d-Math.cos(a)*back, cy=5.24+(back-10.35)*.34;
-    return {cx,cy,cz,a, f:1.67, pitch:.174,aspect};
+  // Aim the vanishing point 2.5% above the image. Back the camera up on
+  // narrow screens so both outer lanes remain readable without changing pitch.
+  const FOCAL_LENGTH = 1.55;
+  const CAMERA_PITCH = Math.atan(1.05 / FOCAL_LENGTH);
+  function camera(state, aspect) {
+    const distance = state.roadZ ?? state.distance ?? 0;
+    const a = Math.atan(roadSlope(distance));
+    const framing = Math.max(1, .70 / aspect);
+    const back = 11.8 * framing;
+    const follow = .22 * LANE * (state.laneX || 0);
+    return {
+      cx: roadX(distance) + follow - Math.sin(a) * back,
+      cy: 14.2 * framing,
+      cz: distance - Math.cos(a) * back,
+      a, f: FOCAL_LENGTH, pitch: CAMERA_PITCH, aspect
+    };
   }
 
   const vertexCode = `
@@ -437,7 +466,7 @@
     const restoreHandler=()=>{prepare();lost=false;};
     canvas.addEventListener('webglcontextlost',lostHandler);
     canvas.addEventListener('webglcontextrestored',restoreHandler);
-    let quality=1, lastClock=0, frameMs=16, count=0, cssW=0, cssH=0, lanePrev=0,steer=0,lastD=0;
+    let quality=1, lastClock=0, frameMs=16, count=0, cssW=0, cssH=0;
     const observe=typeof ResizeObserver==='function' ? new ResizeObserver(entries=>{
       const b=entries[0].contentRect;cssW=b.width;cssH=b.height;
     }) : null;
@@ -459,12 +488,12 @@
       gl.viewport(0,0,w,h);
       gl.clear(gl.DEPTH_BUFFER_BIT);
       gl.useProgram(sky);
-      gl.uniform2f(skySun,(.86-roadSlope(s.distance||0)*1.4)/(w/h),.68);gl.uniform1f(skyAspect,w/h);
+      const d=s.roadZ ?? s.distance ?? 0, t=s.time||0, lane=s.laneX||0, cam=camera(s,w/h);
+      gl.uniform2f(skySun,(.86-roadSlope(d)*1.4)/(w/h),.99);gl.uniform1f(skyAspect,w/h);
       gl.disable(gl.DEPTH_TEST); gl.disableVertexAttribArray(1);
       gl.enableVertexAttribArray(0); gl.bindBuffer(gl.ARRAY_BUFFER,skyBuffer);
       gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0); gl.drawArrays(gl.TRIANGLES,0,3);
       gl.useProgram(scene); gl.enable(gl.DEPTH_TEST);gl.enableVertexAttribArray(1);
-      const d=s.distance||0, t=s.time||0, lane=s.laneX||0, cam=camera(s,w/h);
       gl.uniform4f(uniform.cameraAngles,Math.cos(cam.a),Math.sin(cam.a),Math.cos(cam.pitch),Math.sin(cam.pitch));
       gl.uniform3f(uniform.projection,cam.f/cam.aspect,cam.f,0);
       gl.uniform1f(uniform.lighting,1);
@@ -476,7 +505,7 @@
         gl.vertexAttribPointer(1,3,gl.FLOAT,false,24,12);
         gl.drawArrays(gl.TRIANGLES,0,mesh.n);
       }
-      draw(range,0,0,d);
+      draw(range,0,-15,d);
       const start=Math.floor((cam.cz-5)/CHUNK),end=Math.floor((d+FAR)/CHUNK);
       for(let idx=start;idx<=end;idx++) {
         if(!chunks.has(idx)) chunks.set(idx,upload(section(idx)));
@@ -492,15 +521,12 @@
         draw(items[o.type],x,pickup?Math.sin(t*3+z*.06)*.12:0,z,a+(pickup?.29*Math.sin(t*2.5+z*.17):0));
       }
       const x=roadX(d)+lane*LANE;
-      if(Math.abs(d-lastD)>20||delta>105) steer=0;
-      else steer+=(Math.max(-1,Math.min(1,(lane-lanePrev)*110/Math.max(5,delta)))-steer)*.34;
-      const a=cam.a + steer*.18 + (s.slip ? .105*Math.sin(t*8):0);
+      const a=cam.a+(s.heading||0);
       const speed=Math.min(1,(s.speed||0)/70);
-      const roll=steer*.072+(s.flat?.044+Math.sin(d*1.6)*.013:0)+(s.hit ? Math.sin(t*26)*.035:0);
-      draw(shadow,x+.13,.018,d+.12,cam.a);
+      const roll=(s.steer||0)*.072+(s.flat?.044+Math.sin(d*1.6)*.013:0)+(s.hit ? Math.sin(t*26)*.035:0);
+      draw(shadow,x+.13,.018,d+.12,a);
       if(s.boost) draw(trail,x,.12,d+.16*Math.sin(t*16),a);
       draw(coach,x,.035+Math.sin(d*1.05)*speed*.018+(s.flat?0:Math.cos(d*.73)*.008),d,a,roll);
-      lanePrev=lane;lastD=d;
     }
 
     function dispose(){
@@ -519,18 +545,21 @@
     const cars = new Map();
     function faces(m) {
       const out=[];
+      let group=0, layer=0, side=0;
       for(let i=0;i<m.data.length;i+=18) {
         const d=m.data;
-        out.push({v:[[d[i],d[i+1],d[i+2]],[d[i+6],d[i+7],d[i+8]],[d[i+12],d[i+13],d[i+14]]],
+        while (m.layers?.[group]?.offset===i) ({layer,side}=m.layers[group++]);
+        out.push({layer,side,v:[[d[i],d[i+1],d[i+2]],[d[i+6],d[i+7],d[i+8]],[d[i+12],d[i+13],d[i+14]]],
           col:'rgb('+[d[i+3],d[i+4],d[i+5]].map(c=>Math.min(255,Math.round(c*255))).join(',')+')'});
       }
       return out;
     }
     for(const type of ['cone','barrier','oil','pothole','boost','repair']) cars.set(type,faces(prop(type)));
+    cars.set('bus',faces(bus(true)));
     function render(s) {
       const w=canvas.clientWidth||640,h=canvas.clientHeight||400;
       if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}
-      const c=camera(s,w/h), d=s.distance||0;
+      const c=camera(s,w/h), d=s.roadZ ?? s.distance ?? 0;
       const cs=Math.cos(c.a),sn=Math.sin(c.a),cp=Math.cos(c.pitch),sp=Math.sin(c.pitch);
       function point(x,y,z) {
         const dx=x-c.cx,dy=y-c.cy,dz=z-c.cz,forward=dx*sn+dz*cs,depth=forward*cp-dy*sp;
@@ -542,21 +571,22 @@
         for(let i=1;i<points.length;i++) ctx.lineTo(points[i][0],points[i][1]);
         ctx.closePath();ctx.fill();
       }
-      const horizon=h*(.5-Math.tan(c.pitch)*c.f/2);
-      const sky=ctx.createLinearGradient(0,0,0,horizon);
+      const near=c.cz+1.7, far=d+FAR, zs=Math.floor(far/4)*4;
+      const groundLine=point(roadX(zs+4),0,zs+4)[1];
+      const sky=ctx.createLinearGradient(0,0,0,groundLine);
       sky.addColorStop(0,'#abaaca');sky.addColorStop(1,'#ffcb98');
       ctx.fillStyle=sky;ctx.fillRect(0,0,w,h);
       for (let layer=0;layer<2;layer++) {
-        const base=horizon+layer*6;
+        const base=groundLine+layer*2;
         ctx.fillStyle=layer?'#929979':'#ae9aa9';ctx.beginPath();ctx.moveTo(0,base);
         for(let x=-6;x<=w+6;x+=6) {
           const k=x/h*4.8+c.a*.8+layer*4;
-          ctx.lineTo(x,base-h*(.065+.032*Math.cos(k)+.027*Math.sin(k*2.9)+.019*Math.cos(k*4.2)));
+          const relief=.065+.032*Math.cos(k)+.027*Math.sin(k*2.9)+.019*Math.cos(k*4.2);
+          ctx.lineTo(x,base-h*relief*(layer ? .45 : 1));
         }
         ctx.lineTo(w,base+5);ctx.lineTo(0,base+5);ctx.fill();
       }
-      ctx.fillStyle='#afba6d';ctx.fillRect(0,horizon,w,h-horizon);
-      const far=d+155,near=c.cz+1.7, zs=Math.floor(far/4)*4;
+      ctx.fillStyle='#afba6d';ctx.fillRect(0,groundLine,w,h-groundLine);
       for(let z=zs;z>=near-4;z-=4) {
         const a=Math.max(z,near), b=z+4;
         const strip=(l,r,y,col)=>polygon([point(roadX(a)+l,y,a),point(roadX(a)+r,y,a),point(roadX(b)+r,y,b),point(roadX(b)+l,y,b)],col);
@@ -568,58 +598,20 @@
           if(Math.abs(z/4%3)===0) strip(side*LANE*.5-.09,side*LANE*.5+.09,.02,'#fcf8de');
         }
       }
-      function fallbackBus(x,z,yaw,roll) {
-        const front=point(x,.45,z-2.56), roof=point(x,2.88,z-2.48);
-        const roofEnd=point(x+Math.sin(yaw)*4.45,2.88,z+1.97);
-        const width=2.26*h*.5*c.f/front[2], height=front[1]-roof[1];
-        ctx.save();ctx.translate(front[0],front[1]);ctx.rotate(-roll);
-        const roofShift=roofEnd[0]-front[0], backY=roofEnd[1]-front[1];
-        const half=width/2, taper=.68*half;
-        function rounded(x,y,w,hh,rad,col) {
-          ctx.fillStyle=col;ctx.beginPath();
-          const radius=Math.min(rad,w/2,hh/2);
-          ctx.moveTo(x+radius,y);ctx.arcTo(x+w,y,x+w,y+hh,radius);
-          ctx.arcTo(x+w,y+hh,x,y+hh,radius);ctx.arcTo(x,y+hh,x,y,radius);
-          ctx.arcTo(x,y,x+w,y,radius);ctx.fill();
-        }
-        ctx.fillStyle='#4b4d51';ctx.beginPath();ctx.ellipse(2,2,half*1.02,height*.15,0,0,TAU);ctx.fill();
-        for(const side of [-1,1]) rounded(side*half-width*.03,-height*.23,width*.08,height*.28,width*.03,'#35414a');
-        polygon([[-half,-height+.09*height],[half,-height+.09*height],[roofShift+taper,backY],[roofShift-taper,backY]],'#ede2bd');
-        for(const [frac,tint,wid] of [[.56,'#78a395',.23],[.35,'#bc955d',.33]]) {
-          const cx=frac*roofShift+(frac-.45)*width, y=-height+(backY+height)*frac;
-          rounded(cx-width*wid*.5,y-height*.11,width*wid,height*.13,2,tint);
-        }
-        rounded(-half,-height,width,height,width*.10,'#e9ddc3');
-        rounded(-half+width*.008,-height*.94,width*.984,height*.65,width*.067,'#fff1d2');
-        rounded(-half,-height*.50,width,height*.48,width*.045,'#d5513d');
-        rounded(-half+width*.03,-height*.52,width*.94,height*.055,.5,'#fae2af');
-        rounded(-width*.43,-height*.78,width*.86,height*.265,width*.045,'#3b5260');
-        for(const side of [-1,1]) {
-          const dx=side*width*.205;
-          rounded(dx-width*.184,-height*.753,width*.367,height*.205,width*.025,'#64939e');
-          rounded(dx-width*.145,-height*.74,width*.27,height*.021,1,'#97b6b6');
-          rounded(side*width*.405-width*.030,-height*.25,width*.060,height*.16,1,'#91433b');
-          rounded(side*width*.405-width*.022,-height*.23,width*.044,height*.055,1,'#ffc774');
-        }
-        rounded(-width*.14,-height*.934,width*.28,height*.11,2,'#334950');
-        ctx.fillStyle='#f9d28c';ctx.font='bold '+Math.max(5,height*.088)+'px monospace';ctx.textAlign='center';ctx.fillText('03',0,-height*.846);
-        rounded(-width*.11,-height*.173,width*.22,height*.082,1,'#f4ce83');
-        rounded(-width*.46,-height*.065,width*.92,height*.065,2,'#c6c6b0');
-        ctx.restore();
-      }
       function model(type,x,y,z,yaw,roll) {
-        if(type==='bus') {fallbackBus(x,z,yaw,roll);return;}
         const source=cars.get(type);
         if(!source) return;
         const cy=Math.cos(yaw),sy=Math.sin(yaw), cr=Math.cos(roll),sr=Math.sin(roll), tris=[];
+        const cameraSide=((c.cx-x)*cy-(c.cz-z)*sy)*cr+(c.cy-y)*sr;
         for(const f of source) {
+          if (f.side && f.side*cameraSide<1.1) continue;
           const p=f.v.map(([vx,vy,vz])=>{
             const lx=vx*cr-vy*sr;
             return point(x+lx*cy+vz*sy,y+vx*sr+vy*cr,z-lx*sy+vz*cy);
           });
-          if(p.every(v=>v[2]>.2)) tris.push({p,z:p[0][2]+p[1][2]+p[2][2],col:f.col});
+          if(p.every(v=>v[2]>.2)) tris.push({p,layer:f.layer,z:p[0][2]+p[1][2]+p[2][2],col:f.col});
         }
-        tris.sort((a,b)=>b.z-a.z);
+        tris.sort((a,b)=>a.layer-b.layer||b.z-a.z);
         for (const t of tris) polygon(t.p,t.col);
       }
       const actors=[];
@@ -646,8 +638,17 @@
           }
         } else {
           const bus=a.type==='bus';
-          const yaw=Math.atan(roadSlope(a.z))+(bus&&s.slip?.11*Math.sin(s.time*8):0);
-          model(a.type,a.x,bus?.025:0,a.z,yaw,bus&&s.flat?.045:0);
+          const yaw=Math.atan(roadSlope(a.z))+(bus ? s.heading||0 : 0);
+          const roll=bus ? (s.steer||0)*.072+(s.flat ? .045 : 0) : 0;
+          if (bus) {
+            const shadow=[];
+            for (let i=0;i<12;i++) {
+              const theta=i*TAU/12, x=1.43*Math.cos(theta), z=2.91*Math.sin(theta);
+              shadow.push(point(a.x+.13+x*Math.cos(yaw)+z*Math.sin(yaw),.018,a.z+.12-x*Math.sin(yaw)+z*Math.cos(yaw)));
+            }
+            polygon(shadow,'#414c55');
+          }
+          model(a.type,a.x,bus?.025:0,a.z,yaw,roll);
         }
       }
     }

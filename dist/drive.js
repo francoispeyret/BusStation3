@@ -3,10 +3,23 @@
 
   const LAP_METRES = 1000;
   const LANES = [-1, 0, 1];
+  const LANE_WIDTH = 3.65;
+  const BUS_HALF_WIDTH = 1.16;
+  const BUS_HALF_LENGTH = 2.54;
+  const WHEELBASE = 3.09;
+  const MAX_HEADING_FROM_ROAD = 0.54;
+  const STEERING_LIMIT = 1.5 - (BUS_HALF_WIDTH + 0.08) / LANE_WIDTH;
+  // Half-extents in metres, matching the visible road objects.
+  const FOOTPRINTS = {
+    cone: [0.46, 0.44], barrier: [1.12, 0.35], oil: [1.12, 0.97],
+    pothole: [1.12, 0.97], boost: [0.57, 0.20], repair: [0.56, 0.32]
+  };
   const HAZARDS = ['cone', 'barrier', 'oil', 'pothole'];
   const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
   const choose = items => items[Math.floor(Math.random() * items.length)];
   const isPickup = type => type === 'repair' || type === 'boost';
+  const roadX = z => 11 * Math.sin(z * 0.012) + 8 * Math.sin(z * 0.022 + 0.7);
+  const roadSlope = z => 0.132 * Math.cos(z * 0.012) + 0.176 * Math.cos(z * 0.022 + 0.7);
 
   function makeSound() {
     let ctx, master, motor, engineGain;
@@ -97,7 +110,8 @@
 
   function startingState() {
     return {
-      status: 'ready', distance: 0, speed: 48, time: 0, laneX: 0, lane: 0, steer: 0,
+      status: 'ready', distance: 0, roadZ: 0, speed: 48, time: 0, laneX: 0,
+      worldHeading: Math.atan(roadSlope(0)), heading: 0, steer: 0,
       objects: [], boost: 0, slip: 0, flat: false, hit: 0, score: 0, lap: 1,
       lapProgress: 0, health: 3, gear: 3, rpm: 2200, braking: false
     };
@@ -113,7 +127,7 @@
     let objectId = 0;
     let bonus = 0;
     let nextAudio = 0;
-    let steeringPosition = 0;
+    let steeringInput = 0;
     let slideDirection = 1;
 
     function emit(type, message) {
@@ -126,8 +140,8 @@
     }
 
     function fillRoad() {
-      while (nextWave - state.distance < 210) {
-        const z = nextWave - state.distance;
+      while (nextWave - state.roadZ < 210) {
+        const z = nextWave - state.roadZ;
         // The opening offers one easy dodge, then a visible reward for changing lanes.
         if (wave === 0) {
           addObject(0, z, 'cone');
@@ -197,15 +211,35 @@
       state.gear = Math.min(6, 1 + Math.floor(state.speed / 21));
       state.rpm = Math.round(1500 + state.speed * 89 / (1 + (state.gear - 1) * 0.64));
 
-      const oldX = state.laneX;
-      const response = state.slip > 0 ? 4.8 : state.flat ? 6.9 : 10.5;
-      steeringPosition += (state.lane - steeringPosition) * (1 - Math.exp(-response * dt));
-      const drift = state.slip ? slideDirection * Math.sin(state.slip * 11) * Math.sin(Math.PI * state.slip / 1.6) * 0.23 : 0;
-      state.laneX = clamp(steeringPosition + drift, -1, 1);
-      state.steer = clamp((state.laneX - oldX) / dt / 5, -1, 1);
+      // Bicycle steering in world coordinates. Releasing the wheel straightens
+      // the front tires; the driver keeps the new heading until countersteering.
+      const grip = state.slip ? 0.55 : state.flat ? 0.74 : 1;
+      const path = state.speed * dt / 3.6;
+      const response = steeringInput ? 9 : 15;
+      const oldSteer = state.steer;
+      state.steer += (steeringInput - oldSteer) * (1 - Math.exp(-response * dt));
+      if (!steeringInput && Math.abs(state.steer) < 0.0001) state.steer = 0;
+      const wheelAngle = (oldSteer + state.steer) * 0.5 * 0.28 / (1 + state.speed / 72);
+      const slipYaw = state.slip ? slideDirection * 2.1 * Math.sin(state.slip * 8.3) * Math.sin(Math.PI * state.slip / 1.6) : 0;
+      const oldHeading = state.worldHeading;
+      const yaw = path / WHEELBASE * Math.tan(wheelAngle) * grip + slipYaw * dt;
+      const roadAngle = Math.atan(roadSlope(state.roadZ));
+      state.worldHeading = clamp(oldHeading + yaw, roadAngle - MAX_HEADING_FROM_ROAD, roadAngle + MAX_HEADING_FROM_ROAD);
 
-      const travel = state.speed * dt / 3.6;
-      state.distance += travel;
+      const midHeading = (oldHeading + state.worldHeading) * 0.5;
+      const travel = path * Math.cos(midHeading);
+      const x = roadX(state.roadZ) + state.laneX * LANE_WIDTH + path * Math.sin(midHeading);
+      state.roadZ += travel;
+      state.distance += path;
+      const nextX = (x - roadX(state.roadZ)) / LANE_WIDTH;
+      state.laneX = clamp(nextX, -STEERING_LIMIT, STEERING_LIMIT);
+      const newRoadAngle = Math.atan(roadSlope(state.roadZ));
+      if (state.laneX !== nextX) {
+        // Shoulder friction slows the bus and gradually straightens the body.
+        state.worldHeading += (newRoadAngle - state.worldHeading) * (1 - Math.exp(-7 * dt));
+        state.speed = Math.max(28, state.speed - 23 * dt);
+      }
+      state.heading = state.worldHeading - newRoadAngle;
       const lap = 1 + Math.floor(state.distance / LAP_METRES);
       state.lapProgress = (state.distance % LAP_METRES) / LAP_METRES;
       if (lap > state.lap) {
@@ -214,16 +248,30 @@
         emit('lap', 'Tour ' + lap + ' · +250');
       }
 
+      const busX = roadX(state.roadZ) + state.laneX * LANE_WIDTH;
       for (const object of state.objects) {
         object.z -= travel;
-        if (object.passed || object.z > 2.85) continue;
-        // Check the full contact interval so a late swerve can still clip a cone.
-        const touched = object.z >= -1.8 && Math.abs(state.laneX - object.lane) < (isPickup(object.type) ? 0.49 : 0.56);
+        if (object.passed || object.z > 4.5) continue;
+        // Test the road object's rectangle against the rotated bus on all four axes.
+        // This lets a cone clear a corner even when the bus straddles a line.
+        const objectZ = state.roadZ + object.z;
+        const objectAngle = Math.atan(roadSlope(objectZ));
+        const offsetX = roadX(objectZ) + object.lane * LANE_WIDTH - busX;
+        const cosRoad = Math.cos(objectAngle), sinRoad = Math.sin(objectAngle);
+        const dx = offsetX * cosRoad - object.z * sinRoad;
+        const dz = offsetX * sinRoad + object.z * cosRoad;
+        const relativeHeading = state.worldHeading - objectAngle;
+        const sin = Math.sin(relativeHeading), cos = Math.cos(relativeHeading), absSin = Math.abs(sin);
+        const [width, length] = FOOTPRINTS[object.type];
+        const touched = Math.abs(dx) <= width + BUS_HALF_WIDTH * cos + BUS_HALF_LENGTH * absSin
+          && Math.abs(dz) <= length + BUS_HALF_WIDTH * absSin + BUS_HALF_LENGTH * cos
+          && Math.abs(dx * cos - dz * sin) <= BUS_HALF_WIDTH + width * cos + length * absSin
+          && Math.abs(dx * sin + dz * cos) <= BUS_HALF_LENGTH + width * absSin + length * cos;
         if (touched) {
           object.passed = true;
           object.collected = true;
           encounter(object.type);
-        } else if (object.z < -1.8) {
+        } else if (object.z < -4.5) {
           object.passed = true;
           if (!isPickup(object.type)) bonus += 10;
         }
@@ -278,7 +326,7 @@
       start() {
         cancelAnimationFrame(frameId);
         Object.assign(state, startingState());
-        wave = objectId = bonus = nextAudio = steeringPosition = 0;
+        wave = objectId = bonus = nextAudio = steeringInput = 0;
         nextWave = 55;
         fillRoad();
         beginFrames();
@@ -286,6 +334,7 @@
       pause() {
         if (state.status !== 'running') return;
         state.status = 'paused';
+        steeringInput = 0;
         state.braking = false;
         cancelAnimationFrame(frameId);
         audio.setDriving(false);
@@ -293,10 +342,8 @@
       resume() {
         if (state.status === 'paused') beginFrames();
       },
-      move(direction) {
-        if (state.status === 'running' && (direction === -1 || direction === 1)) {
-          state.lane = clamp(state.lane + direction, -1, 1);
-        }
+      steer(value) {
+        steeringInput = state.status === 'running' && Number.isFinite(value) ? clamp(value, -1, 1) : 0;
       },
       brake(pressed) {
         state.braking = state.status === 'running' && Boolean(pressed);
@@ -305,11 +352,12 @@
       stop() {
         cancelAnimationFrame(frameId);
         state.status = 'stopped';
+        steeringInput = 0;
         state.braking = false;
         audio.setDriving(false);
       }
     };
   }
 
-  window.BusDrive = { create };
+  window.BusDrive = { create, roadX, roadSlope };
 })();

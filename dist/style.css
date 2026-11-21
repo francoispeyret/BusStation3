@@ -32,6 +32,13 @@
   --salmon:#ff887b;
   --display:"Archivo Black",Rubik,"Arial Black",sans-serif;
   --sans:Rubik,system-ui,sans-serif;
+  --viewport:100vh;
+  --topbar:50px;
+  --edge:clamp(4px,.6vw,10px);
+}
+
+@supports (height:100dvh) {
+  :root { --viewport:100dvh; }
 }
 
 * {
@@ -40,7 +47,7 @@
 
 body {
   margin:0;
-  min-height:100vh;
+  min-height:var(--viewport);
   background-color:var(--bg);
   background-image:radial-gradient(ellipse at 50% 10%,#31253977,transparent 68%),radial-gradient(#a794c310 .85px,transparent .85px);
   background-size:auto,8px 8px;
@@ -106,21 +113,23 @@ i[data-icon] {
 }
 
 .topbar {
-  height:82px;
+  height:var(--topbar);
   border-bottom:1px solid #383040;
   background:#201b2b;
 }
 
 .topinner,.shell {
-  width:min(1312px,calc(100% - 9vw));
+  width:calc(100% - 2 * var(--edge));
   margin:0 auto;
 }
 
 .topinner {
+  padding-left:env(safe-area-inset-left);
+  padding-right:env(safe-area-inset-right);
   height:100%;
   display:flex;
   align-items:center;
-  gap:28px;
+  gap:18px;
 }
 
 .brand {
@@ -133,8 +142,8 @@ i[data-icon] {
 }
 
 .brand img {
-  height:43px;
-  width:46px;
+  height:36px;
+  width:40px;
 }
 
 .brand>span {
@@ -211,24 +220,33 @@ i[data-icon] {
 }
 
 .shell {
-  padding:30px 0 38px;
+  display:flex;
+  flex-direction:column;
+  gap:var(--edge);
+  height:calc(var(--viewport) - var(--topbar));
+  padding-block:var(--edge);
 }
 
 .cabinet {
+  display:flex;
+  flex-direction:column;
+  flex:1 0 0;
+  min-height:310px;
   border:1px solid #4a3d53;
-  border-radius:23px;
+  border-radius:14px;
   background:#272131;
-  padding:7px 7px 0;
-  box-shadow:0 6px 0 -2px #100e17,0 16px 36px #0c09152b;
+  padding:3px 3px 0;
+  box-shadow:0 2px 4px #100e1740;
   position:relative;
   outline:none;
 }
 
 .screen {
-  height:clamp(360px,32.4vw,465px);
+  flex:1;
+  min-height:0;
   position:relative;
   isolation:isolate;
-  border-radius:16px 16px 9px 9px;
+  border-radius:10px 10px 6px 6px;
   overflow:hidden;
   background:#282136;
   touch-action:manipulation;
@@ -241,18 +259,26 @@ i[data-icon] {
   height:100%;
 }
 
-.key-art {
-  background-image:linear-gradient(90deg,#181527b0 0%,#21172b91 22%,#251d3030 40%,transparent 58%),url(assets/alpine-run.webp);
-  background-size:cover;
-  background-position:center;
+.attract {
+  container-type:size;
+  overflow:hidden;
+  background:#392535;
 }
 
-.key-art:after {
+/* Extend the forest at the edge of the square artwork behind the title. */
+.attract::before {
   content:"";
   position:absolute;
   inset:0;
-  background:linear-gradient(0deg,#20182b33,transparent 30%);
-  pointer-events:none;
+  background:linear-gradient(85deg,#211a2cda,#382539b8 44%,#36263b),url(assets/col-des-pins.webp) left 42% / 330% auto no-repeat;
+}
+
+.key-art {
+  left:auto;
+  width:76%;
+  width:min(76%,166cqh);
+  background:url(assets/col-des-pins.webp) 52% 51% / cover no-repeat;
+  mask-image:linear-gradient(to right,transparent,#000 18%);
 }
 
 .home-copy {
@@ -472,7 +498,8 @@ button.primary:active {
 .dashboard {
   display:grid;
   grid-template-columns:repeat(4,minmax(0,1fr));
-  padding:22px 0 23px;
+  flex:none;
+  padding:9px 0;
 }
 
 .gauge {
@@ -612,15 +639,15 @@ button.primary:active {
 .info-grid {
   display:grid;
   grid-template-columns:1.58fr 1fr;
-  gap:18px;
-  margin-top:23px;
+  flex:none;
+  gap:var(--edge);
 }
 
 .panel {
   background:linear-gradient(122deg,#282231,#241f2e);
   border:1px solid #3e3449;
   border-radius:17px;
-  padding:20px 23px 22px;
+  padding:12px 18px 14px;
   box-shadow:0 3px 0 #120f1a40;
 }
 
@@ -659,7 +686,7 @@ button.primary:active {
   display:grid;
   grid-template-columns:.87fr 1.22fr 1fr;
   gap:10px;
-  margin-top:17px;
+  margin-top:9px;
 }
 
 .guide-item {
@@ -720,7 +747,7 @@ button.primary:active {
   align-items:center;
   justify-content:space-between;
   gap:10px;
-  margin-top:18px;
+  margin-top:10px;
 }
 
 .keyrows>div {
@@ -823,7 +850,8 @@ kbd {
   display:none;
   position:absolute;
   bottom:15px;
-  inset-inline:15px;
+  left:max(15px,env(safe-area-inset-left));
+  right:max(15px,env(safe-area-inset-right));
   justify-content:space-between;
   align-items:center;
   pointer-events:none;
@@ -1083,19 +1111,7 @@ dialog::backdrop {
   overflow:hidden;
 }
 
-@media (min-width:1600px) {
-  .shell {
-    padding-top:40px;
-  }
-  .screen {
-    height:465px;
-  }
-}
-
 @media (max-width:990px) {
-  .topinner,.shell {
-    width:calc(100% - 48px);
-  }
   .topinner {
     gap:18px;
   }
@@ -1111,10 +1127,9 @@ dialog::backdrop {
   }
   .info-grid {
     grid-template-columns:1.55fr 1fr;
-    gap:13px;
   }
   .panel {
-    padding:17px 15px 19px;
+    padding:10px 13px;
   }
   .guide-items {
     gap:8px;
@@ -1132,12 +1147,6 @@ dialog::backdrop {
   .guide-item p {
     font-size:.72rem;
   }
-  .screen {
-    height:350px;
-  }
-  .key-art {
-    background-position:58% center;
-  }
   .wordmark {
     font-size:65px;
   }
@@ -1149,12 +1158,7 @@ dialog::backdrop {
 }
 
 @media (max-width:760px) {
-  .topbar {
-    height:65px;
-  }
-  .topinner,.shell {
-    width:calc(100% - 28px);
-  }
+  :root { --topbar:46px; }
   .topinner {
     gap:12px;
   }
@@ -1184,18 +1188,11 @@ dialog::backdrop {
   .sound span {
     display:none;
   }
-  .shell {
-    padding-top:18px;
-  }
   .home-copy {
     padding-left:23px;
   }
-  .key-art {
-    background-position:56% center;
-  }
   .info-grid {
     grid-template-columns:1fr;
-    margin-top:15px;
   }
   .guide-items {
     grid-template-columns:repeat(3,1fr);
@@ -1226,7 +1223,7 @@ dialog::backdrop {
     gap:5px;
   }
   .dashboard {
-    padding:17px 0;
+    padding:7px 0;
   }
   .gauge {
     padding:0 10px;
@@ -1252,12 +1249,7 @@ dialog::backdrop {
 }
 
 @media (max-width:570px) {
-  .topbar {
-    height:60px;
-  }
-  .topinner,.shell {
-    width:calc(100% - 22px);
-  }
+  :root { --topbar:44px; }
   .topinner {
     gap:7px;
   }
@@ -1289,19 +1281,11 @@ dialog::backdrop {
     height:16px;
   }
   .cabinet {
-    border-radius:17px;
-    padding:5px 5px 0;
+    border-radius:11px;
+    padding:2px 2px 0;
   }
   .screen {
-    height:425px;
-    border-radius:12px 12px 7px 7px;
-  }
-  .key-art {
-    background-color:#2c2433;
-    background-image:linear-gradient(0deg,#271f31 0%,#281f31 3%,#2a2235a6 32%,transparent 67%),url(assets/alpine-run.webp);
-    background-repeat:no-repeat;
-    background-size:100% 100%,auto 63%;
-    background-position:center,76% top;
+    border-radius:8px 8px 5px 5px;
   }
   .home-copy {
     justify-content:flex-end;
@@ -1348,7 +1332,7 @@ dialog::backdrop {
     height:31px;
   }
   .dashboard {
-    padding:14px 0;
+    padding:7px 0;
   }
   .gauge {
     display:block;
@@ -1386,14 +1370,14 @@ dialog::backdrop {
     top:1px;
   }
   .panel {
-    border-radius:14px;
-    padding:15px;
+    border-radius:12px;
+    padding:9px 12px;
   }
   .panel h2 {
     font-size:1.05rem;
   }
   .guide-items {
-    margin-top:13px;
+    margin-top:7px;
     gap:8px;
   }
   .guide-item {
@@ -1415,10 +1399,7 @@ dialog::backdrop {
     display:block;
   }
   .keyrows {
-    margin-top:15px;
-  }
-  .info-grid {
-    gap:10px;
+    margin-top:8px;
   }
   .touch-controls {
     display:flex;
@@ -1428,12 +1409,6 @@ dialog::backdrop {
   }
   .panel-heading {
     gap:7px;
-  }
-  .cabinet:fullscreen .key-art,.cabinet.maximized .key-art {
-    background-size:100% 100%,auto 65%;
-  }
-  .cabinet:fullscreen .home-copy,.cabinet.maximized .home-copy {
-    padding-bottom:8vh;
   }
 }
 
@@ -1451,7 +1426,7 @@ dialog::backdrop {
     color:var(--muted);
     font-size:.85rem;
     line-height:1.4;
-    margin-top:13px;
+    margin-top:6px;
   }
   .touch-help .icon {
     color:var(--lilac);
@@ -1469,9 +1444,6 @@ dialog::backdrop {
   }
   .navitem {
     padding:7px 6px;
-  }
-  .topinner,.shell {
-    width:calc(100% - 16px);
   }
   .navitem .icon {
     display:none;
@@ -1554,3 +1526,99 @@ dialog::backdrop {
   }
 }
 
+
+/* In a race the counters float above the road, leaving the canvas all the
+   height the browser offers below the navigation, including in landscape. */
+.in-race .cabinet {
+  min-height:0;
+  padding:0;
+  border:0;
+}
+.in-race .screen {
+  border-radius:10px;
+}
+.in-race .info-grid {
+  display:none;
+}
+.in-race .dashboard {
+  position:absolute;
+  left:50%;
+  bottom:max(7px,env(safe-area-inset-bottom));
+  transform:translateX(-50%);
+  width:min(720px,calc(100% - 12px));
+  border:1px solid #cab3d347;
+  border-radius:13px;
+  background:#241f30ed;
+  color:var(--cream);
+  box-shadow:0 3px 12px #130e2440;
+  pointer-events:none;
+}
+.in-race .dashboard .gauge {
+  padding-inline:clamp(8px,1.2vw,19px);
+}
+.in-race .dashboard .gauge-icon {
+  width:32px;
+  height:32px;
+  border-radius:9px;
+}
+.in-race .dashboard .gauge-icon .icon {
+  width:19px;
+  height:19px;
+}
+.in-race .dashboard .reading strong {
+  font-size:clamp(18px,1.6vw,23px);
+}
+.in-race .dashboard .gauge+.gauge::before {
+  height:27px;
+}
+.in-race .tach {
+  display:none;
+}
+.in-race .touch-controls {
+  bottom:calc(64px + env(safe-area-inset-bottom));
+}
+.touch-controls button.is-held {
+  background:#68526deb;
+  border-color:var(--yellow);
+}
+.in-race .cabinet:fullscreen .screen,.in-race .cabinet.maximized .screen {
+  border-radius:0;
+}
+
+@media (max-aspect-ratio:1/1) {
+  .cabinet { min-height: min(580px,calc(var(--viewport) - var(--topbar) - 2 * var(--edge))); }
+  .attract::before { background:linear-gradient(#443043,#241d2e); }
+  .key-art {
+    width:100%;
+    height:78%;
+    background-position:50% 51%;
+    mask-image:linear-gradient(to bottom,#000 70%,transparent 100%);
+  }
+  .home-copy {
+    justify-content:flex-end;
+    padding:0 clamp(16px,5vw,40px) clamp(16px,3.3vh,34px);
+    pointer-events:none;
+  }
+  .home-copy button { pointer-events:auto; }
+  .wordmark { font-size:clamp(47px,8vw,78px); }
+}
+
+@media (max-height:530px) and (orientation:landscape) {
+  :root { --topbar:40px; }
+  .shell { min-height:0; }
+  .cabinet { min-height:calc(var(--viewport) - var(--topbar) - 2 * var(--edge)); }
+  .home-copy { padding:9px 0 12px 3vw; }
+  .wordmark { font-size:clamp(40px,12vh,62px); margin:10px 0; }
+  .home-copy p { margin:4px 0 9px; font-size:.84rem; }
+  .primary.start { min-height:34px; padding:8px 15px; font-size:.88rem; }
+  .mode-label { padding:4px 7px; }
+  .dashboard { padding:4px 0; }
+  .in-race .touch-controls { bottom:8px; }
+  @media (max-width:700px) {
+    .in-race .touch-controls { bottom:54px; }
+  }
+  .in-race .dashboard { width: min(60%,620px); }
+  .in-race .dashboard .gauge-icon { display:none; }
+  .in-race .dashboard .gauge-label { font-size:.55rem; }
+  .in-race .dashboard .gauge { gap:0; }
+}

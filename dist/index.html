@@ -7,11 +7,11 @@
   <meta name="description" content="Prends le volant du bus de la ligne 03, évite les obstacles et signe ton record dans ce jeu de conduite en 3D.">
   <title>Bus Station 3 · Arcade</title>
   <link rel="icon" href="assets/bus-mark.svg" type="image/svg+xml">
-  <link rel="preload" href="assets/alpine-run.webp" as="image">
-  <link rel="stylesheet" href="style.css">
-  <script src="drive.js" defer></script>
-  <script src="world.js" defer></script>
-  <script src="arcade.js" defer></script>
+  <link rel="preload" href="assets/col-des-pins.webp" as="image">
+  <link rel="stylesheet" href="style.css?v=2">
+  <script src="drive.js?v=2" defer></script>
+  <script src="world.js?v=2" defer></script>
+  <script src="arcade.js?v=2" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -40,7 +40,7 @@
           </div>
           <div class="track-tag"><i data-icon="pin"></i> Col des Pins</div>
         </div>
-        <canvas id="road" hidden aria-label="Route en 3D. Utilise les flèches gauche et droite pour changer de voie."></canvas>
+        <canvas id="road" hidden aria-label="Route en 3D. Maintiens les flèches gauche et droite pour diriger le bus."></canvas>
         <div class="run-info" id="run-info" hidden>
           <div class="condition" aria-label="État du bus"><i data-icon="heart"></i><span id="health" class="health"></span></div>
           <div id="engine" class="engine" aria-label="Régime moteur"></div>
@@ -52,9 +52,9 @@
         </div>
         <div id="notice" class="notice" role="status" hidden></div>
         <div id="touch-controls" class="touch-controls" hidden>
-          <button id="left" aria-label="Voie de gauche"><i data-icon="left"></i></button>
+          <button id="left" aria-label="Braquer à gauche"><i data-icon="left"></i></button>
           <button id="brake" aria-label="Freiner"><i data-icon="brake"></i></button>
-          <button id="right" aria-label="Voie de droite"><i data-icon="right"></i></button>
+          <button id="right" aria-label="Braquer à droite"><i data-icon="right"></i></button>
         </div>
       </div>
       <div class="dashboard" aria-label="Tableau de bord">
@@ -76,11 +76,11 @@
       <section class="panel controls">
         <div class="panel-heading"><span class="heading-mark violet"><i data-icon="gamepad"></i></span><h2>Commandes</h2></div>
         <div class="keyrows">
-          <div><span class="keygroup"><kbd aria-label="Flèche gauche">←</kbd><kbd aria-label="Flèche droite">→</kbd></span><span>Changer de voie</span></div>
+          <div><span class="keygroup"><kbd aria-label="Flèche gauche">←</kbd><kbd aria-label="Flèche droite">→</kbd></span><span>Diriger le bus</span></div>
           <div><span class="keygroup"><kbd aria-label="Flèche bas">↓</kbd></span><span>Freiner</span></div>
           <div><span class="keygroup"><kbd>P</kbd></span><span>Pause</span></div>
         </div>
-        <div class="touch-help"><i data-icon="touch"></i><span>Touche les flèches pour changer de voie. Maintiens le frein pour ralentir.</span></div>
+        <div class="touch-help"><i data-icon="touch"></i><span>Maintiens une flèche ou fais glisser ton doigt sur la route pour braquer.</span></div>
       </section>
     </div>
   </main>

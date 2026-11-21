@@ -36,6 +36,8 @@
   const rankingPrefix = 'busstation3.result.';
   const memoryScores = new Map();
   let renderer, view = 'home', panel = '', scoreId = '', scoreSaved = false, lastHud = -1, lastHealth = -1, noticeUntil = 0;
+  const heldControls = new Map();
+  let drag = null;
   let graphicsLost = false;
   let soundOn = true;
   try { soundOn = localStorage.getItem('busstation3.sound') !== '0'; } catch {}
@@ -85,6 +87,7 @@
     hud(state);
   }
   function showRun(active) {
+    document.body.classList.toggle('in-race', active);
     $('attract').hidden = active;
     road.hidden = !active;
     $('run-info').hidden = !active;
@@ -105,9 +108,10 @@
     }
     scoreId = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2,10);
     scoreSaved = false;
+    releaseControls();
     game.start();
     cabinet.focus({preventScroll:true});
-    if (cabinet.getBoundingClientRect().top < 0) cabinet.scrollIntoView({block:'start'});
+    if (window.scrollY > 0) window.scrollTo(0, 0);
   }
   function home() {
     closeDialog();
@@ -118,6 +122,7 @@
     $('play').focus({preventScroll:true});
   }
   function openDialog(kind, symbol, heading, html) {
+    releaseControls();
     panel = kind;
     title.textContent = heading;
     body.innerHTML = html;
@@ -276,6 +281,45 @@
   // The dialog stays inside the active fullscreen element so controls remain available.
   cabinet.append(modal);
   document.addEventListener('fullscreenchange',refreshSizeButton);
+  // Keyboard, touch buttons and the analog drag can be used at the same time.
+  // Each release only clears its own input (e.g. lifting the brake while turning).
+  const directions = new Map([
+    ['arrowleft', -1], ['a', -1], ['q', -1],
+    ['arrowright', 1], ['d', 1],
+    ['arrowdown', 'brake'], ['s', 'brake']
+  ]);
+  const touchButtons = new Map([['left', -1], ['right', 1], ['brake', 'brake']]);
+
+  function applyControls() {
+    let left = 0;
+    let right = 0;
+    let braking = false;
+    for (const input of heldControls.values()) {
+      if (input === 'brake') braking = true;
+      else {
+        left = Math.min(left, input);
+        right = Math.max(right, input);
+      }
+    }
+    game.steer(left + right);
+    game.brake(braking);
+    $('left').classList.toggle('is-held', left < 0);
+    $('right').classList.toggle('is-held', right > 0);
+    $('brake').classList.toggle('is-held', braking);
+  }
+  function releaseControls() {
+    drag = null;
+    heldControls.clear();
+    applyControls();
+  }
+  function setControl(id, value) {
+    if (game.state.status !== 'running' || modal.open) return;
+    heldControls.set(id, value);
+    applyControls();
+  }
+  function releaseControl(id) {
+    if (heldControls.delete(id)) applyControls();
+  }
   function handleKey(e) {
     if (e.ctrlKey || e.metaKey || e.altKey || e.target.matches('input,textarea,[contenteditable=true]')) return;
     if (modal.open) {
@@ -288,31 +332,53 @@
     }
     if (game.state.status !== 'running') return;
     const key = e.key.toLowerCase();
-    if (!['arrowleft','arrowright','arrowdown','a','q','d','s',' ','p','escape'].includes(key)) return;
-    e.preventDefault();
-    if (e.repeat) return;
-    if (key === 'arrowleft' || key === 'a' || key === 'q') game.move(-1);
-    else if (key === 'arrowright' || key === 'd') game.move(1);
-    else if (key === 'arrowdown' || key === 's') game.brake(true);
-    else pauseGame();
-  }
-  document.addEventListener('keydown',handleKey);
-  document.addEventListener('keyup',e => { if (['ArrowDown','s','S'].includes(e.key)) game.brake(false); });
-  for (const [id,direction] of [['left',-1],['right',1]]) {
-    $(id).addEventListener('click',() => game.move(direction));
-  }
-  $('brake').addEventListener('pointerdown',e => { e.preventDefault(); $('brake').setPointerCapture(e.pointerId); game.brake(true); });
-  for (const name of ['pointerup','pointercancel','lostpointercapture']) $('brake').addEventListener(name,() => game.brake(false));
-  let swipe = null;
-  road.addEventListener('pointerdown',e => { swipe = {id:e.pointerId,x:e.clientX,y:e.clientY}; road.setPointerCapture(e.pointerId); });
-  road.addEventListener('pointerup',e => {
-    if (swipe?.id === e.pointerId) {
-      const dx = e.clientX - swipe.x;
-      if (Math.abs(dx) > 24 && Math.abs(dx) > Math.abs(e.clientY-swipe.y)) game.move(Math.sign(dx));
+    const buttonInput = [' ', 'enter'].includes(key) ? touchButtons.get(e.target.id) : undefined;
+    const input = buttonInput ?? directions.get(key);
+    if (input !== undefined) {
+      e.preventDefault();
+      if (!e.repeat) setControl('key-' + (e.code || key), input);
+    } else if ([' ', 'p', 'escape'].includes(key)) {
+      e.preventDefault();
+      if (!e.repeat) pauseGame();
     }
-    swipe = null;
+  }
+  document.addEventListener('keydown', handleKey);
+  document.addEventListener('keyup', e => releaseControl('key-' + (e.code || e.key.toLowerCase())));
+
+  function finishPointer(e) {
+    if (drag?.id === e.pointerId) drag = null;
+    releaseControl(e.pointerId);
+  }
+  for (const [id, input] of touchButtons) {
+    const button = $(id);
+    button.addEventListener('pointerdown', e => {
+      if (e.button !== 0 || game.state.status !== 'running') return;
+      e.preventDefault();
+      button.setPointerCapture(e.pointerId);
+      setControl(e.pointerId, input);
+    });
+    for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) button.addEventListener(name, finishPointer);
+    // Assistive technologies can activate a button without sending pointer events.
+    button.addEventListener('click', e => {
+      if (e.detail !== 0 || game.state.status !== 'running') return;
+      const source = Symbol(id);
+      setControl(source, input);
+      window.setTimeout(() => releaseControl(source), 130);
+    });
+  }
+  road.addEventListener('pointerdown', e => {
+    if (e.button !== 0 || drag || game.state.status !== 'running') return;
+    e.preventDefault();
+    road.setPointerCapture(e.pointerId);
+    drag = { id: e.pointerId, x: e.clientX, range: Math.min(120, Math.max(48, road.clientWidth * .16)) };
   });
-  road.addEventListener('pointercancel',() => { swipe = null; });
+  road.addEventListener('pointermove', e => {
+    if (drag?.id !== e.pointerId) return;
+    const dx = e.clientX - drag.x;
+    const amount = Math.sign(dx) * Math.min(1, Math.max(0, Math.abs(dx) - 3) / drag.range);
+    setControl(e.pointerId, amount);
+  });
+  for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) road.addEventListener(name, finishPointer);
   road.addEventListener('webglcontextlost', () => {
     graphicsLost = true;
     if (game.state.status === 'running') pauseGame();
