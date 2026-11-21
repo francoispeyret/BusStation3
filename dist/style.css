@@ -539,10 +539,13 @@ button.primary:active {
   height:17px;
 }
 
+.dashboard-wrap {
+  flex:none;
+}
+
 .dashboard {
   display:grid;
   grid-template-columns:repeat(4,minmax(0,1fr));
-  flex:none;
   padding:9px 0;
 }
 
@@ -1691,14 +1694,23 @@ dialog.finish-reveal[open]::backdrop {
 .in-race .info-grid {
   display:none;
 }
-.in-race .dashboard {
+.in-race .dashboard-wrap {
   --hud-inset:max(8px,env(safe-area-inset-left),env(safe-area-inset-right));
   position:absolute;
   left:50%;
   bottom:max(7px,env(safe-area-inset-bottom));
   transform:translateX(-50%);
   width:min(940px,calc(100% - var(--hud-inset) - var(--hud-inset)));
-  grid-template-columns:repeat(2,minmax(0,1fr)) auto repeat(2,minmax(0,1fr));
+  pointer-events:none;
+}
+.in-race .heart-meter {
+  position:absolute;
+  left:50%;
+  bottom:calc(100% + 6px);
+  transform:translateX(-50%);
+}
+.in-race .dashboard {
+  position:relative;
   align-items:center;
   padding-block:4px;
   border:1px solid #cab3d347;
@@ -1706,7 +1718,6 @@ dialog.finish-reveal[open]::backdrop {
   background:#241f30ed;
   color:var(--cream);
   box-shadow:0 3px 12px #130e2440;
-  pointer-events:none;
 }
 .in-race .dashboard .gauge {
   padding-inline:clamp(8px,1.2vw,19px);
@@ -1779,14 +1790,8 @@ dialog.finish-reveal[open]::backdrop {
   .in-race .dashboard .gauge-icon { display:none; }
 }
 
-/* In portrait the hearts sit between the touch controls, just above the dials. */
 @media (max-width:760px) and (min-height:531px), (max-width:520px) {
-  .in-race .dashboard { grid-template-columns:1.2fr 1.2fr .68fr 1fr; }
   .in-race .heart-meter {
-    position:absolute;
-    left:50%;
-    bottom:calc(100% + 6px);
-    transform:translateX(-50%);
     --heart-size:clamp(42px,11vw,52px);
   }
 }
