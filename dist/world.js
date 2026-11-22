@@ -7,7 +7,7 @@
   const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)');
   const {roadX, roadSlope, periodForLap, sceneryForLap, lapAtRoadZ, roadZForLap, DRIVABLE_HALF_WIDTH, RAMP, ROCKET_METRES} = window.BusDrive;
   const LAP_SIGN_OFFSET = DRIVABLE_HALF_WIDTH + 2.85;
-  const {Mesh,rgb,random,lettering} = window.BusMesh;
+  const {Mesh,rgb,random,lettering,gpuGeometry} = window.BusMesh;
   const fleet = window.BusModels;
   const fleetById = new Map(fleet.models.map(model => [model.id, model]));
   const {CHUNK,LANE,ROAD,biomeFor,routeThemeAt,terrainScale,terrainHeight:heightAtOffset,terrainHeightAt,surfaceColorAt,shoulderColorAt,
@@ -874,11 +874,12 @@
   }
 
   function gpuRenderer(canvas,gl,is2) {
-    let scene,sky,uniform,skyUniform,skyBuffer,trail,range,items, lost=false;
+    let scene,sky,uniform,skyUniform,screenTriangle,trail,range,items, lost=false;
     const coaches = new Map();
     const updateSpray=shoulderSpray();
-    let sprayBuffer;
+    let sprayMesh, vertexArrays, boundMesh;
     let caster,filter,casterUniform,filterUniform,rawMap,blurMap,nearMap,farMap;
+    const transientShadowDepth=[gl.DEPTH_ATTACHMENT];
     let farSample=null;
     const chunks=new Map();
     const animatedMeshes=new Map();
@@ -892,6 +893,7 @@
       modelMatrix[6]=(sn*cp+cy*sr*sp)*sz; modelMatrix[7]=-cr*sp*sz; modelMatrix[8]=(cy*cp-sn*sr*sp)*sz;
       return modelMatrix;
     }
+    const identity=transform(0,0,0).slice();
     const locations=(p,names)=>Object.fromEntries(names.map(n=>[n,gl.getUniformLocation(p,n)]));
     function shadowTarget(width,height,withDepth=false) {
       const texture=gl.createTexture(), framebuffer=gl.createFramebuffer();
@@ -912,13 +914,69 @@
       }
       return {texture,framebuffer,depth,width,height};
     }
+    function configureAttributes(mesh) {
+      gl.bindBuffer(gl.ARRAY_BUFFER,mesh.buf);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,mesh.elements);
+      gl.enableVertexAttribArray(0);
+      if(mesh.screen) {
+        gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
+        gl.disableVertexAttribArray(1);
+      } else {
+        gl.vertexAttribPointer(0,3,gl.FLOAT,false,24,0);
+        gl.vertexAttribPointer(1,3,gl.FLOAT,false,24,12);
+        gl.enableVertexAttribArray(1);
+      }
+    }
+    function createMesh(vertices,indices=null,screen=false) {
+      const mesh={buf:gl.createBuffer(),elements:indices?gl.createBuffer():null,screen,
+        n:indices?.length ?? (vertices?.length || 0)/(screen?2:6)};
+      if(vertexArrays) {
+        mesh.vao=vertexArrays.create();
+        vertexArrays.bind(mesh.vao);
+      }
+      configureAttributes(mesh);
+      if(vertices) gl.bufferData(gl.ARRAY_BUFFER,vertices,gl.STATIC_DRAW);
+      if(indices) gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,indices,gl.STATIC_DRAW);
+      boundMesh=mesh;
+      return mesh;
+    }
     function upload(model) {
-      const b=gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER,b);
-      gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(model.data),gl.STATIC_DRAW);
-      return {buf:b,n:model.data.length/6};
+      const {vertices,indices}=gpuGeometry(model);
+      return createMesh(vertices,indices);
+    }
+    function bindMesh(mesh) {
+      if(boundMesh===mesh) return;
+      if(vertexArrays) vertexArrays.bind(mesh.vao);
+      else configureAttributes(mesh);
+      boundMesh=mesh;
+    }
+    function triangles(mesh) {
+      if(mesh.elements) gl.drawElements(gl.TRIANGLES,mesh.n,gl.UNSIGNED_SHORT,0);
+      else gl.drawArrays(gl.TRIANGLES,0,mesh.n);
+    }
+    function deleteMesh(mesh) {
+      if(boundMesh===mesh) boundMesh=null;
+      if(vertexArrays) vertexArrays.remove(mesh.vao);
+      if(mesh.elements) gl.deleteBuffer(mesh.elements);
+      gl.deleteBuffer(mesh.buf);
+    }
+    // Static scenery can extend beyond its section. Bound the actual vertices so
+    // shadow passes can skip a complete mesh without dropping an off-screen caster.
+    function sectionBounds(data) {
+      let minY=Infinity,maxY=-Infinity,minZ=Infinity,maxZ=-Infinity;
+      for(let i=1;i<data.length;i+=6) {
+        const y=data[i], z=data[i+1];
+        minY=Math.min(minY,y); maxY=Math.max(maxY,y);
+        minZ=Math.min(minZ,z); maxZ=Math.max(maxZ,z);
+      }
+      return {minY,maxY,minZ,maxZ};
     }
     function prepare() {
+      // Extensions and vertex arrays belong to the current graphics context.
+      const oes=is2?null:gl.getExtension('OES_vertex_array_object');
+      vertexArrays=is2 ? {create:()=>gl.createVertexArray(),bind:v=>gl.bindVertexArray(v),remove:v=>gl.deleteVertexArray(v)}
+        : oes && {create:()=>oes.createVertexArrayOES(),bind:v=>oes.bindVertexArrayOES(v),remove:v=>oes.deleteVertexArrayOES(v)};
+      boundMesh=null;
       scene=program(gl,is2,vertexCode,fragmentCode);
       sky=program(gl,is2,skyVertex,skyFragment);
       caster=program(gl,is2,casterVertex,casterFragment);
@@ -929,6 +987,8 @@
         'cameraHeight','nearBounds','farBounds','nearShadow','farShadow']);
       casterUniform=locations(caster,['offset','model','lightSlope','cameraHeight','bounds','opacity']);
       filterUniform=locations(filter,['source','stepUV']);
+      gl.useProgram(filter);
+      gl.uniform1i(filterUniform.source,0);
       const limit=Math.min(gl.getParameter(gl.MAX_TEXTURE_SIZE),gl.getParameter(gl.MAX_RENDERBUFFER_SIZE));
       const width=Math.min(512,limit),height=Math.min(640,limit);
       rawMap=shadowTarget(width,height,true);
@@ -941,9 +1001,7 @@
       gl.uniform1i(uniform.farShadow,1);
       gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,farMap.texture);
       gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,nearMap.texture);
-      skyBuffer=gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER,skyBuffer);
-      gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
+      screenTriangle=createMesh(new Float32Array([-1,-1,3,-1,-1,3]),null,true);
       coaches.clear();
       range=upload(backdrop());
       const streak=new Mesh();
@@ -951,7 +1009,7 @@
         streak.tri([side*(x-.038),0,0],[side*(x+.038),0,0],[side*x,0,-l],'#ffcc66');
       }
       trail=upload(streak);
-      sprayBuffer=gl.createBuffer();
+      sprayMesh=createMesh(null);
       items={};
       for(const type of PROP_TYPES) items[type]=upload(prop(type));
       gl.enable(gl.DEPTH_TEST);
@@ -975,7 +1033,7 @@
       if(lost||gl.isContextLost()) return;
       const routeChanged=cachedLapBiomes!==s.lapBiomes;
       if(routeChanged) {
-        for(const mesh of chunks.values()) gl.deleteBuffer(mesh.buf);
+        for(const mesh of chunks.values()) deleteMesh(mesh);
         chunks.clear();
         farSample=null;
         cachedLapBiomes=s.lapBiomes;
@@ -997,66 +1055,39 @@
       const scale=Math.min(1.65,window.devicePixelRatio||1,1900/cw,1900/ch)*(benchmark?1:quality);
       const w=Math.max(1,Math.round(cw*scale)),h=Math.max(1,Math.round(ch*scale));
       if(canvas.width!==w||canvas.height!==h) {canvas.width=w;canvas.height=h;}
-      gl.viewport(0,0,w,h);
-      gl.clear(gl.DEPTH_BUFFER_BIT);
-      gl.useProgram(sky);
       const bus=fleetById.get(s.busModel)||fleet.models[0], busOpacity=s.busOpacity??1;
       if(!coaches.has(bus)) coaches.set(bus,upload(fleet.mesh(bus.id)));
       const d=s.roadZ ?? s.distance ?? 0, t=s.time||0, cam=camera(s,w/h,bus);
       const light=lapLighting(s), sun=light.direction;
       const solar=light.night<1 && projectDisc(light.sun,cam);
       const lunar=light.night>0 && projectDisc(light.moon,cam);
-      gl.uniform4f(skyUniform.discs,solar?solar[0]:0,solar?solar[1]:-10,lunar?lunar[0]:0,lunar?lunar[1]:-10);
-      gl.uniform1f(skyUniform.aspect,cam.aspect);
-      gl.uniform1f(skyUniform.horizonY,cam.f*Math.tan(cam.pitch));
-      gl.uniform1f(skyUniform.night,light.night);
-      gl.uniform3fv(skyUniform.horizonColor,light.horizon);
-      gl.uniform3fv(skyUniform.zenithColor,light.zenith);
-      gl.disable(gl.DEPTH_TEST); gl.disableVertexAttribArray(1);
-      gl.enableVertexAttribArray(0); gl.bindBuffer(gl.ARRAY_BUFFER,skyBuffer);
-      gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0); gl.drawArrays(gl.TRIANGLES,0,3);
-      gl.useProgram(scene); gl.enable(gl.DEPTH_TEST);gl.enableVertexAttribArray(1);
-      gl.uniform4f(uniform.cameraAngles,Math.cos(cam.a),Math.sin(cam.a),Math.cos(cam.pitch),Math.sin(cam.pitch));
-      // Distant mountains form a backdrop behind the rolling ground.
-      gl.uniform3f(uniform.projection,cam.f/cam.aspect,cam.f,BEND_RATE*.64);
-      gl.uniform3fv(uniform.ambientTint,light.tint);
-      gl.uniform3fv(uniform.fogColor,light.fog);
-      gl.uniform1f(uniform.headlamps,0);
-      gl.uniform3f(uniform.rocketLight,0,0,0);
-      gl.uniform1f(uniform.opacity,1);
-      gl.uniform1f(uniform.shadowStrength,0);
       let transformUniform=uniform;
+      let identityUniform=null;
       function draw(mesh,x,y,z,a=0,roll=0,pitch=0,sx=1,sy=1,sz=1,fadeSolid=false) {
-        gl.uniformMatrix3fv(transformUniform.model,false,transform(a,roll,pitch,sx,sy,sz));
+        // Consecutive track sections differ only by translation in both shadow and colour passes.
+        if(a===0 && roll===0 && pitch===0 && sx===1 && sy===1 && sz===1) {
+          if(identityUniform!==transformUniform) gl.uniformMatrix3fv(transformUniform.model,false,identity);
+          identityUniform=transformUniform;
+        } else {
+          gl.uniformMatrix3fv(transformUniform.model,false,transform(a,roll,pitch,sx,sy,sz));
+          identityUniform=null;
+        }
         gl.uniform3f(transformUniform.offset,x-cam.cx,y-cam.cy,z-cam.cz);
-        gl.bindBuffer(gl.ARRAY_BUFFER,mesh.buf);
-        gl.vertexAttribPointer(0,3,gl.FLOAT,false,24,0);
-        if(transformUniform===uniform) gl.vertexAttribPointer(1,3,gl.FLOAT,false,24,12);
+        bindMesh(mesh);
         // Fade the exterior silhouette without accumulating alpha on hidden interior faces.
         if(fadeSolid) {
           gl.colorMask(false,false,false,false);
           gl.depthMask(true);
-          gl.drawArrays(gl.TRIANGLES,0,mesh.n);
+          triangles(mesh);
           gl.depthMask(false);
           gl.colorMask(true,true,true,true);
           gl.depthFunc(gl.LEQUAL);
         }
-        gl.drawArrays(gl.TRIANGLES,0,mesh.n);
+        triangles(mesh);
         if(fadeSolid) gl.depthFunc(gl.LESS);
       }
       const intro=s.introProgress<1;
       const skyline=skylineScaleAt(d+185*Math.cos(cam.a),s.lapBiomes);
-      if(skyline>0) draw(range,0,-15,d,0,0,0,1,skyline,1);
-      if(intro) {
-        // As the camera rises, move the lateral matte below the terrain so it
-        // joins the forward skyline without a cut on ultrawide views.
-        const settle=Math.max(0,2*s.introProgress-1);
-        const base=-15-84*settle*settle;
-        draw(range,0,base,d,Math.PI*.5);
-        draw(range,0,base,d,Math.PI);
-      }
-      gl.clear(gl.DEPTH_BUFFER_BIT);
-      gl.uniform3f(uniform.projection,cam.f/cam.aspect,cam.f,BEND_RATE);
       const start=Math.floor((intro ? d-FAR : cam.cz-5)/CHUNK),end=Math.floor((d+FAR)/CHUNK);
       // Include off-screen casters even at moonrise or sunset, when the
       // highest trees on the hillside can project beyond an entire section.
@@ -1067,11 +1098,14 @@
       for(let idx=firstCaster;idx<=lastCaster;idx++) {
         if(!chunks.has(idx)) {
           const tile=section(idx,s.lapBiomes);
-          chunks.set(idx,{...upload(tile),movingActors:tile.movingActors});
+          const mesh=upload(tile);
+          mesh.movingActors=tile.movingActors;
+          mesh.bounds=sectionBounds(tile.data);
+          chunks.set(idx,mesh);
         }
       }
       for(const [idx,mesh] of chunks) if(idx<firstCaster||idx>lastCaster) {
-        gl.deleteBuffer(mesh.buf);chunks.delete(idx);
+        deleteMesh(mesh);chunks.delete(idx);
       }
       const actors=[];
       for(const [idx,tile] of chunks) for(const actor of tile.movingActors) {
@@ -1134,21 +1168,27 @@
         const reach=.5/area[3]+reachZ;
         const first=Math.max(firstCaster,Math.floor((midZ-reach)/CHUNK));
         const last=Math.min(lastCaster,Math.floor((midZ+reach)/CHUNK));
-        for(let i=first;i<=last;i++) draw(chunks.get(i),0,0,i*CHUNK);
+        // The caster shader projects z to z - y * slopeZ. Allow a metre for raster / float rounding.
+        const halfDepth=.5/area[3]+1;
+        for(let i=first;i<=last;i++) {
+          const mesh=chunks.get(i), b=mesh.bounds, z=i*CHUNK-midZ;
+          const shift0=b.minY*slopeZ, shift1=b.maxY*slopeZ;
+          if(z+b.maxZ-Math.min(shift0,shift1)<-halfDepth || z+b.minZ-Math.max(shift0,shift1)>halfDepth) continue;
+          draw(mesh,0,0,i*CHUNK);
+        }
         for(const actor of actors) if(actor.casts && Math.abs(actor.args[3]-midZ)<reach) draw(...actor.args);
         for(const impact of impacts) if(impact.solid) {
           gl.uniform1f(casterUniform.opacity,impact.shadowAlpha??impact.alpha);
           draw(...impact.args);
         }
+        // Only colour is sampled by the filters. The next shadow pass clears depth.
+        if(is2) gl.invalidateFramebuffer(gl.FRAMEBUFFER,transientShadowDepth);
         gl.disable(gl.DEPTH_TEST);
         gl.useProgram(filter);
-        gl.bindBuffer(gl.ARRAY_BUFFER,skyBuffer);
-        gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
-        gl.uniform1i(filterUniform.source,0);
+        bindMesh(screenTriangle);
         filterPass(rawMap,blurMap,blurStep*area[2],0);
         filterPass(blurMap,target,0,blurStep*area[3]);
       }
-      gl.disableVertexAttribArray(1);
       gl.disable(gl.DITHER);
       // The filter operates in metres, so dynamic screen resolution does not
       // change the penumbra. A lower sun gives the longer shadows softer edges.
@@ -1170,12 +1210,43 @@
         renderMap(farMap,area,.48);
         farSample={t,d,intro,x:area[0]+cam.cx,z:area[1]+cam.cz,invX:area[2],invZ:area[3],sx,sz};
       }
+      // Finish both shadow maps before opening the multisampled canvas render pass.
       gl.bindFramebuffer(gl.FRAMEBUFFER,null);
       gl.viewport(0,0,w,h);
       gl.enable(gl.DITHER);
-      gl.enable(gl.DEPTH_TEST);gl.enableVertexAttribArray(1);
-      gl.useProgram(scene);
+      gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+      gl.useProgram(sky);
       transformUniform=uniform;
+      gl.uniform4f(skyUniform.discs,solar?solar[0]:0,solar?solar[1]:-10,lunar?lunar[0]:0,lunar?lunar[1]:-10);
+      gl.uniform1f(skyUniform.aspect,cam.aspect);
+      gl.uniform1f(skyUniform.horizonY,cam.f*Math.tan(cam.pitch));
+      gl.uniform1f(skyUniform.night,light.night);
+      gl.uniform3fv(skyUniform.horizonColor,light.horizon);
+      gl.uniform3fv(skyUniform.zenithColor,light.zenith);
+      gl.disable(gl.DEPTH_TEST);
+      bindMesh(screenTriangle);
+      gl.drawArrays(gl.TRIANGLES,0,3);
+      gl.useProgram(scene); gl.enable(gl.DEPTH_TEST);
+      gl.uniform4f(uniform.cameraAngles,Math.cos(cam.a),Math.sin(cam.a),Math.cos(cam.pitch),Math.sin(cam.pitch));
+      // Distant mountains form a backdrop behind the rolling ground.
+      gl.uniform3f(uniform.projection,cam.f/cam.aspect,cam.f,BEND_RATE*.64);
+      gl.uniform3fv(uniform.ambientTint,light.tint);
+      gl.uniform3fv(uniform.fogColor,light.fog);
+      gl.uniform1f(uniform.headlamps,0);
+      gl.uniform3f(uniform.rocketLight,0,0,0);
+      gl.uniform1f(uniform.opacity,1);
+      gl.uniform1f(uniform.shadowStrength,0);
+      if(skyline>0) draw(range,0,-15,d,0,0,0,1,skyline,1);
+      if(intro) {
+        // As the camera rises, move the lateral matte below the terrain so it
+        // joins the forward skyline without a cut on ultrawide views.
+        const settle=Math.max(0,2*s.introProgress-1);
+        const base=-15-84*settle*settle;
+        draw(range,0,base,d,Math.PI*.5);
+        draw(range,0,base,d,Math.PI);
+      }
+      if(skyline>0 || intro) gl.clear(gl.DEPTH_BUFFER_BIT);
+      gl.uniform3f(uniform.projection,cam.f/cam.aspect,cam.f,BEND_RATE);
       gl.uniform1f(uniform.shadowStrength,light.shadow);
       gl.uniform1f(uniform.headlamps,light.night*busOpacity);
       gl.uniform3fv(uniform.headlamp,bus.headlamp);
@@ -1205,9 +1276,10 @@
           mesh.tri(l,top,bottom,chip.color,chip.shade);
           mesh.tri(top,r,bottom,chip.color,chip.shade*.80);
         }
-        gl.bindBuffer(gl.ARRAY_BUFFER,sprayBuffer);
+        gl.bindBuffer(gl.ARRAY_BUFFER,sprayMesh.buf);
         gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(mesh.data),gl.DYNAMIC_DRAW);
-        draw({buf:sprayBuffer,n:mesh.data.length/6},0,0,d);
+        sprayMesh.n=mesh.data.length/6;
+        draw(sprayMesh,0,0,d);
       }
       if(impacts.length) {
         gl.enable(gl.BLEND);
@@ -1228,14 +1300,12 @@
       observe?.disconnect();
       canvas.removeEventListener('webglcontextlost',lostHandler);
       canvas.removeEventListener('webglcontextrestored',restoreHandler);
-      for(const model of [range,trail,...coaches.values(),...Object.values(items),...chunks.values(),...animatedMeshes.values()]) gl.deleteBuffer(model.buf);
+      for(const mesh of [screenTriangle,sprayMesh,range,trail,...coaches.values(),...Object.values(items),...chunks.values(),...animatedMeshes.values()]) deleteMesh(mesh);
       for(const target of [rawMap,blurMap,nearMap,farMap]) {
         gl.deleteFramebuffer(target.framebuffer);
         gl.deleteTexture(target.texture);
         if(target.depth) gl.deleteRenderbuffer(target.depth);
       }
-      gl.deleteBuffer(skyBuffer);
-      gl.deleteBuffer(sprayBuffer);
       for(const p of [sky,scene,caster,filter]) gl.deleteProgram(p);
     }
     return {render,dispose,renderer:is2?'WebGL 2':'WebGL'};

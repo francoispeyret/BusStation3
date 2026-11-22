@@ -20,6 +20,11 @@
     };
   }
 
+  function appendTriangle(data, a, b, c, red, green, blue) {
+    data.push(a[0],a[1],a[2],red,green,blue, b[0],b[1],b[2],red,green,blue,
+      c[0],c[1],c[2],red,green,blue);
+  }
+
   class Mesh {
     constructor() { this.data = []; }
     instance(source,x,y,z,yaw,size) {
@@ -31,12 +36,12 @@
     }
     tri(a, b, c, color, light = 1) {
       const v = rgb(color);
-      const r = v[0] * light, g = v[1] * light, blue = v[2] * light;
-      this.data.push(...a,r,g,blue,...b,r,g,blue,...c,r,g,blue);
+      appendTriangle(this.data, a, b, c, v[0]*light, v[1]*light, v[2]*light);
     }
     quad(a,b,c,d,color,light=1) {
-      this.tri(a,b,c,color,light);
-      this.tri(a,c,d,color,light);
+      const v = rgb(color), r=v[0]*light, g=v[1]*light, blue=v[2]*light;
+      appendTriangle(this.data, a, b, c, r, g, blue);
+      appendTriangle(this.data, a, c, d, r, g, blue);
     }
     box(x,y,z,w,h,l,col) {
       const x0=x-w/2, x1=x+w/2, z0=z-l/2, z1=z+l/2, t=y+h;
@@ -82,6 +87,46 @@
       const t=rs[rs.length-1];
       for (let i=1;i<7;i++) this.tri(t[0],t[i],t[i+1],color);
     }
+  }
+
+  // Most surfaces are emitted as A,B,C,A,C,D. Reuse those corners after all
+  // terrain and lighting edits, comparing the exact position and colour bits
+  // that the GPU receives. Keep triangle order for depth, blending and shadows.
+  function gpuGeometry(model) {
+    const vertices = new Float32Array(model.data);
+    const count = vertices.length / 6;
+    if (count < 6 || count > 65535) return {vertices, indices:null};
+    const words = new Uint32Array(vertices.buffer);
+    function sameVertex(a,b) {
+      return words[a]===words[b] && words[a+1]===words[b+1] && words[a+2]===words[b+2]
+        && words[a+3]===words[b+3] && words[a+4]===words[b+4] && words[a+5]===words[b+5];
+    }
+    const indices = new Uint16Array(count);
+    let packed = 0;
+    for (let i=0; i<count;) {
+      const src = i*6, dst = packed*6;
+      const quad = i+6<=count && sameVertex(src,src+18) && sameVertex(src+12,src+24);
+      if (src!==dst) words.copyWithin(dst,src,src+18);
+      indices[i] = packed;
+      indices[i+1] = packed+1;
+      indices[i+2] = packed+2;
+      if (quad) {
+        words.copyWithin(dst+18, src+30, src+36);
+        indices[i+3] = packed;
+        indices[i+4] = packed+2;
+        indices[i+5] = packed+3;
+        i += 6;
+        packed += 4;
+      } else {
+        i += 3;
+        packed += 3;
+      }
+    }
+    if (packed===count) return {vertices, indices:null};
+    if (packed*24 + indices.byteLength >= vertices.byteLength) {
+      return {vertices:new Float32Array(model.data), indices:null};
+    }
+    return {vertices:vertices.subarray(0,packed*6), indices};
   }
 
   const glyphs = {
@@ -153,5 +198,5 @@
     m.quad(...high,color);
   }
 
-  window.BusMesh = {Mesh,rgb,random,lettering,turn:TAU,mod,clamp01,basin,beam};
+  window.BusMesh = {Mesh,rgb,random,gpuGeometry,lettering,turn:TAU,mod,clamp01,basin,beam};
 })();
