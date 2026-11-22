@@ -4,6 +4,7 @@
 
   const FAR = 288;
   const TAU = Math.PI * 2;
+  const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)');
   const {roadX, roadSlope, periodForLap, sceneryForLap, lapAtRoadZ, roadZForLap, DRIVABLE_HALF_WIDTH, RAMP, ROCKET_METRES} = window.BusDrive;
   const LAP_SIGN_OFFSET = DRIVABLE_HALF_WIDTH + 2.85;
   const {Mesh,rgb,random,lettering} = window.BusMesh;
@@ -18,6 +19,14 @@
   const meadowBands = [...outerBands.map(x => -x).reverse(),
     ...Array.from({length:33}, (_,i) => (i-16)*4), ...outerBands];
   const centreBand = (meadowBands.length-1)/2;
+
+  function coachOpacity(s,base) {
+    if(!(s.rocketGrace>0)) return base;
+    const gentle=reducedMotion?.matches;
+    // Five smooth pulses in two seconds, or one shallow fade with reduced motion.
+    const wave=Math.sin(Math.PI*(gentle ? .5 : 2.5)*s.rocketGrace);
+    return base*(1-(gentle ? .32 : .74)*wave*wave);
+  }
 
   function groundBend(forward) {
     const beyond = Math.max(0, forward-BEND_START);
@@ -1078,8 +1087,9 @@
       landingShadow(s,bus,(sx,sz,alpha)=>{
         impacts.push({alpha,args:[items.jumpShade,x,.044,d,a,0,0,sx,1,sz]});
       });
-      if(busOpacity>=1) actors.push({casts:true,args:coachArgs});
-      else if(busOpacity>0) impacts.push({solid:true,alpha:busOpacity,args:coachArgs});
+      const bodyOpacity=coachOpacity(s,busOpacity);
+      if(bodyOpacity>=1) actors.push({casts:true,args:coachArgs});
+      else if(bodyOpacity>0) impacts.push({solid:true,alpha:bodyOpacity,shadowAlpha:busOpacity,args:coachArgs});
       if(rocket) {
         const {x,y,z}=rocket.nozzle;
         actors.push({casts:true,args:[items.rocketMotor,x,y,z,a,roll,pitch]},
@@ -1120,7 +1130,7 @@
         for(let i=first;i<=last;i++) draw(chunks.get(i),0,0,i*CHUNK);
         for(const actor of actors) if(actor.casts && Math.abs(actor.args[3]-midZ)<reach) draw(...actor.args);
         for(const impact of impacts) if(impact.solid) {
-          gl.uniform1f(casterUniform.opacity,impact.alpha);
+          gl.uniform1f(casterUniform.opacity,impact.shadowAlpha??impact.alpha);
           draw(...impact.args);
         }
         gl.disable(gl.DEPTH_TEST);
@@ -1856,7 +1866,7 @@
         actors.push({type:o.type,x:roadX(z)+o.lane*LANE,z,y:pickup?.12*Math.sin(t*3+z*.06):0,
           yaw:Math.atan(roadSlope(z))+(pickup?.29*Math.sin(t*2.5+z*.17):0),ground:o.type==='oil'||o.type==='pothole'});
       }
-      if(busOpacity>0) actors.push({type:'bus',...pose,z:d,alpha:busOpacity});
+      if(busOpacity>0) actors.push({type:'bus',...pose,z:d,alpha:coachOpacity(s,busOpacity)});
       if(rocket) {
         const mount={...rocket.nozzle,yaw:pose.yaw,pitch:pose.pitch,roll:pose.roll};
         actors.push({type:'rocketMotor',...mount},{type:'rocketFlame',...mount,
@@ -1965,7 +1975,7 @@
           (screen.every(p=>p[0]<-3*blur)||screen.every(p=>p[0]>w+3*blur)||screen.every(p=>p[1]>h+3*blur)||screen.every(p=>groundClearance(p)<-1)))) return;
         // Drape nested contours on the terrain. A smooth opacity ramp and
         // extra samples for large shadows keep the foreground feathered.
-        const opacity=light.shadow*(a.alpha??1)*(.72-.32*Math.min(1,Math.max(0,a.forward)/FAR));
+        const opacity=light.shadow*(a.type==='bus'?busOpacity:a.alpha??1)*(.72-.32*Math.min(1,Math.max(0,a.forward)/FAR));
         const maxLayers=a.type==='fir' || a.type==='biomeModel'?8:36;
         const layers=Math.max(6,Math.min(maxLayers,Math.ceil(2*blur)));
         for(let i=0;i<layers;i++) {

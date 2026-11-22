@@ -16,6 +16,15 @@ function collectRocket() {
   return race;
 }
 
+function finishThrust({state, step}) {
+  for (let i = 0; state.rocketRemaining > 0 && i < 500; i++) {
+    state.objects.length = 0;
+    step();
+  }
+  assert.equal(state.rocketRemaining, 0);
+  assert.ok(state.rocketGrace > 2 - 1 / 60 && state.rocketGrace <= 2);
+}
+
 test('rocket thrust builds to 300 km/h in about four seconds and expires after 400 metres', () => {
   for (const frameMs of [1000 / 60, 100]) {
     const race = collectRocket();
@@ -41,7 +50,7 @@ test('rocket thrust builds to 300 km/h in about four seconds and expires after 4
   }
 });
 
-test('the rocket protects against barriers and potholes only while attached', () => {
+test('barriers and potholes do no damage during thrust or the next two seconds', () => {
   const race = collectRocket();
   const {state, events, step} = race;
   for (let i = 0; state.rocketRemaining > 50 && i < 500; i++) {
@@ -60,14 +69,44 @@ test('the rocket protects against barriers and potholes only while attached', ()
   putOnRoad(race, 'cone');
   step();
   assert.ok(events.some(e => e.type === 'cone'));
-  for (let i = 0; state.rocketRemaining > 0 && i < 500; i++) {
+  finishThrust(race);
+  for (let i = 0; i < 19; i++) {
     state.objects.length = 0;
-    step();
+    step(100);
   }
-  assert.equal(state.rocketRemaining, 0);
+  for (const type of ['barrier', 'pothole']) {
+    putOnRoad(race, type);
+    step(10);
+    assert.equal(state.health, 3);
+    assert.equal(state.flat, false);
+    assert.equal(state.hit, 0);
+  }
+  assert.ok(state.rocketGrace > .06 && state.rocketGrace <= .081);
+  step(state.rocketGrace * 1000 + 1);
+  assert.equal(state.rocketGrace, 0);
   putOnRoad(race, 'barrier');
   step();
   assert.equal(state.health, 2);
+});
+
+test('pause freezes the post-rocket protection and a new rocket starts a fresh cycle', () => {
+  const race = collectRocket();
+  const {game, state, step} = race;
+  finishThrust(race);
+  const remaining = state.rocketGrace;
+  game.pause();
+  step(5000);
+  game.resume();
+  step();
+  assert.equal(state.rocketGrace, remaining);
+  putOnRoad(race, 'rocket');
+  step();
+  assert.ok(state.rocketRemaining > 398 && state.rocketRemaining <= 400);
+  assert.equal(state.rocketGrace, 0);
+  finishThrust(race);
+  game.start();
+  assert.equal(state.rocketGrace, 0);
+  assert.equal(state.rocketRemaining, 0);
 });
 
 test('a ramp can launch the rocket-powered bus while respecting the speed limit', () => {

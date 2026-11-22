@@ -40,6 +40,7 @@
   const RAMP_KICK_KMH = 12;
   const RAMP_KICK_SECONDS = 0.35;
   const ROCKET_METRES = 400;
+  const ROCKET_GRACE_SECONDS = 2;
   const ROCKET_SPEED = 300;
   const ROCKET_ACCELERATION = 55; // km/h per second
   const ROCKET_BRAKING = 200; // km/h per second
@@ -446,7 +447,8 @@
       distance: 0, roadZ: 0, speed: LAUNCH_SPEED, time: 0, laneX: 0,
       worldHeading: Math.atan(roadSlope(0)), heading: 0, steer: 0,
       shoulderContact: 0, rearWheels: [-1, 1].map(side => ({side, x: 0, z: 0, contact: 0})),
-      objects: [], impacts: [], jump: null, boost: 0, rocketRemaining: 0, slip: 0, flat: false, hit: 0, score: 0, lap: 1,
+      objects: [], impacts: [], jump: null, boost: 0, rocketRemaining: 0, rocketGrace: 0,
+      slip: 0, flat: false, hit: 0, score: 0, lap: 1,
       lapBiomes: ['hills'], lapProgress: 0, health: 3, gear: 3, rpm: 2200, braking: false
     };
     updateWheelContact(state);
@@ -547,11 +549,12 @@
       if (p === 1) state.jump = null;
     }
 
-    function encounter(type, rocketProtected) {
+    function encounter(type) {
       if (type === 'rocket') {
         state.rocketRemaining = ROCKET_METRES;
+        state.rocketGrace = 0;
         audio.setRocket(true);
-        emit(type, 'Cœurs protégés sur ' + ROCKET_METRES + ' m');
+        emit(type, 'Cœurs protégés sur ' + ROCKET_METRES + ' m, puis encore ' + ROCKET_GRACE_SECONDS + ' s');
         return;
       }
       if (type === 'repair') {
@@ -578,7 +581,7 @@
         emit(type, 'Cône renversé · Bus ralenti');
         return;
       }
-      if (rocketProtected) return;
+      if (state.rocketRemaining > 0 || state.rocketGrace > 0) return;
       state.health = Math.max(0, state.health - 1);
       state.boost = 0;
       if (type === 'pothole') state.flat = true;
@@ -644,6 +647,7 @@
       if (state.phase === 'stopping') return;
       state.phase = 'stopping';
       state.rocketRemaining = 0;
+      state.rocketGrace = 0;
       audio.setRocket(false);
       phaseTime = 0;
       stopSpeed = state.speed;
@@ -677,6 +681,7 @@
       advanceClock(dt);
       state.boost = Math.max(0, state.boost - dt);
       state.slip = Math.max(0, state.slip - dt);
+      state.rocketGrace = Math.max(0, state.rocketGrace - dt);
 
       const powered = state.rocketRemaining > 0;
       const previousSpeed = state.speed;
@@ -724,6 +729,7 @@
         state.rocketRemaining = Math.max(0, state.rocketRemaining - path);
         if (state.rocketRemaining < 1e-8) {
           state.rocketRemaining = 0;
+          state.rocketGrace = ROCKET_GRACE_SECONDS;
           if (state.jump) state.jump.entrySpeed = state.speed;
           audio.setRocket(false);
         }
@@ -784,8 +790,7 @@
               speed: state.speed / 3.6, start: state.time, duration
             });
           }
-          // A contact along the final powered metre is still protected.
-          encounter(object.type, powered || state.rocketRemaining > 0);
+          encounter(object.type);
         } else if (object.z < -4.5) {
           object.passed = true;
           if (!isPickup(object.type)) dodgePoints += 10;
@@ -913,6 +918,7 @@
         state.status = 'stopped';
         state.jump = null;
         state.rocketRemaining = 0;
+        state.rocketGrace = 0;
         audio.setRocket(false);
         steeringInput = 0;
         state.braking = false;
