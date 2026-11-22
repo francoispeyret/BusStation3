@@ -6,6 +6,16 @@
   function periodForLap(lap=1) {
     return (Math.max(1,Math.floor(lap))-1)%LAP_PERIODS.length;
   }
+  const SCENERY_NAMES = {hills: 'Collines', village: 'Village', forest: 'Forêt'};
+  const BIOMES = Object.keys(SCENERY_NAMES);
+  const previewBiomes = ['hills'];
+  function sceneryForLap(lap = 1, lapBiomes = previewBiomes) {
+    lap = Math.floor(lap);
+    if (lap <= 1 || !Number.isFinite(lap)) return 'hills';
+    // Approaching a marker reveals the next draw. Keep it for every later visit.
+    while (lapBiomes.length < lap) lapBiomes.push(choose(BIOMES));
+    return lapBiomes[lap - 1];
+  }
   const INTRO_SECONDS = 3.2;
   const LAUNCH_WAIT = 0.65;
   const LAUNCH_SPEED = 48;
@@ -30,6 +40,51 @@
   const isPickup = type => type === 'repair' || type === 'boost';
   const roadX = z => 11 * Math.sin(z * 0.012) + 8 * Math.sin(z * 0.022 + 0.7);
   const roadSlope = z => 0.132 * Math.cos(z * 0.012) + 0.176 * Math.cos(z * 0.022 + 0.7);
+
+  // Both bends repeat after this distance on the Z axis. Measure one period
+  // along the centreline so each kilometre marker has a permanent road position.
+  const roadPeriod = 2 * Math.PI / .002;
+  const sampleCount = 1024;
+  const sampleStep = roadPeriod / sampleCount;
+  const roadLengths = new Float64Array(sampleCount + 1);
+  let previousScale = Math.hypot(1, roadSlope(0));
+  for (let i = 1; i <= sampleCount; i++) {
+    const scale = Math.hypot(1, roadSlope(i * sampleStep));
+    roadLengths[i] = roadLengths[i - 1] + (previousScale + scale) * .5 * sampleStep;
+    previousScale = scale;
+  }
+  const periodLength = roadLengths[sampleCount];
+  function routeProgressAt(z) {
+    if (z <= 0) return 0;
+    const period = Math.floor(z / roadPeriod);
+    const sample = (z - period * roadPeriod) / sampleStep;
+    const i = Math.min(sampleCount - 1, Math.floor(sample));
+    const metres = period * periodLength + roadLengths[i] + (sample - i) * (roadLengths[i + 1] - roadLengths[i]);
+    // Roundoff from the inverse lookup must not leave the bus on the previous lap at its sign.
+    return (metres + 1e-8) / LAP_METRES;
+  }
+  function lapAtRoadZ(z) {
+    return 1 + Math.floor(routeProgressAt(z));
+  }
+  // Geometry and terrain samples repeatedly ask for the same nearby markers.
+  const lapMarkers = new Array(4);
+  function roadZForLap(lap) {
+    const slot = lap % lapMarkers.length;
+    if (lapMarkers[slot]?.lap === lap) return lapMarkers[slot].z;
+    const metres = Math.max(0, lap - 1) * LAP_METRES;
+    const period = Math.floor(metres / periodLength);
+    const within = metres - period * periodLength;
+    let lo = 0, hi = sampleCount;
+    while (lo + 1 < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (roadLengths[mid] <= within) lo = mid;
+      else hi = mid;
+    }
+    const fraction = (within - roadLengths[lo]) / (roadLengths[lo + 1] - roadLengths[lo]);
+    const z = period * roadPeriod + (lo + fraction) * sampleStep;
+    lapMarkers[slot] = {lap, z};
+    return z;
+  }
 
   function makeSound() {
     const engineUrl = 'assets/bus-engine.wav';
@@ -295,7 +350,7 @@
       distance: 0, roadZ: 0, speed: LAUNCH_SPEED, time: 0, laneX: 0,
       worldHeading: Math.atan(roadSlope(0)), heading: 0, steer: 0,
       objects: [], impacts: [], boost: 0, slip: 0, flat: false, hit: 0, score: 0, lap: 1,
-      lapProgress: 0, health: 3, gear: 3, rpm: 2200, braking: false
+      lapBiomes: ['hills'], lapProgress: 0, health: 3, gear: 3, rpm: 2200, braking: false
     };
   }
 
@@ -497,11 +552,13 @@
         state.speed = Math.max(28, state.speed - 23 * dt);
       }
       state.heading = state.worldHeading - newRoadAngle;
-      const lap = 1 + Math.floor(state.distance / LAP_METRES);
-      state.lapProgress = (state.distance % LAP_METRES) / LAP_METRES;
+      const progress = routeProgressAt(state.roadZ);
+      const lap = 1 + Math.floor(progress);
+      state.lapProgress = progress % 1;
       if (lap > state.lap) {
         state.lap = lap;
-        emit('lap', 'Tour ' + lap + ' · ' + LAP_PERIODS[periodForLap(lap)], 250);
+        const scenery = SCENERY_NAMES[sceneryForLap(lap, state.lapBiomes)];
+        emit('lap', 'Tour ' + lap + ' · ' + scenery + ' · ' + LAP_PERIODS[periodForLap(lap)], 250);
       }
 
       const busX = roadX(state.roadZ) + state.laneX * LANE_WIDTH;
@@ -650,5 +707,6 @@
     };
   }
 
-  window.BusDrive = { create, roadX, roadSlope, periodForLap };
+  window.BusDrive = { create, roadX, roadSlope, periodForLap, sceneryForLap, SCENERY_NAMES,
+    lapAtRoadZ, roadZForLap };
 })();
