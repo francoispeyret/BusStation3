@@ -525,21 +525,25 @@
     }
   }
 
-  // Leave sky above the peaks while keeping the bus at its original screen
-  // height. Back up on narrow screens to keep both outer lanes readable.
+  // Frame the distant ridgeline one sixth of the way down the driving view.
   const FOCAL_LENGTH = 1.55;
-  const CAMERA_PITCH = Math.atan(.55 / FOCAL_LENGTH);
+  const SKY_FRACTION = 1/6;
+  const RIDGE_PITCH = Math.atan((1-2*SKY_FRACTION)/FOCAL_LENGTH);
   function camera(state, aspect) {
     const distance = state.roadZ ?? state.distance ?? 0;
     const a = Math.atan(roadSlope(distance));
     const framing = Math.max(1, .70 / aspect);
-    const back = 15 * framing;
+    const back = 13.3 * framing;
+    const height = 12.9 * framing;
+    // A low ridge 115 m ahead represents the skyline of the curved course.
+    // Sight it from the actual camera height, including in portrait.
+    const chasePitch = RIDGE_PITCH + Math.atan2(height-2,115);
     const follow = .22 * LANE * (state.laneX || 0);
     const chase = {
       cx: roadX(distance) + follow - Math.sin(a) * back,
-      cy: 10.8 * framing,
+      cy: height,
       cz: distance - Math.cos(a) * back,
-      a, f: FOCAL_LENGTH, pitch: CAMERA_PITCH, aspect
+      a, f: FOCAL_LENGTH, pitch: chasePitch, aspect
     };
     if (!(state.introProgress < 1)) return chase;
     const t = Math.max(0,state.introProgress);
@@ -548,15 +552,18 @@
     // Orbit a point just inside the windscreen, then open the shot and lift the
     // sightline until position and tangent meet the normal chase camera.
     const angle = a + (Math.PI-.39)*remaining;
-    const frontRadius = Math.max(4.65,1.38+2.9/aspect);
+    const minFrontRadius = 4.65;
+    const frontRadius = Math.max(minFrontRadius,1.38+2.9/aspect);
     const radius = frontRadius*remaining + back*sweep;
     const pivotX = roadX(distance) + follow*sweep + ((state.laneX||0)*LANE + Math.sin(a)*1.35)*remaining;
     const pivotZ = distance + Math.cos(a)*1.35*remaining;
-    const y = 2.00*remaining + chase.cy*sweep;
-    const chaseSightline = chase.cy - Math.tan(CAMERA_PITCH)*back;
+    // Pulling back for the portrait close-up also reveals more of the horizon.
+    const frontPitch = RIDGE_PITCH-.06 + Math.atan((frontRadius-minFrontRadius)/32);
+    const pitch = frontPitch*remaining + chasePitch*sweep;
+    const chaseSightline = chase.cy - Math.tan(chasePitch)*back;
     const aimY = 1.52 + (chaseSightline-1.52)*sweep*sweep;
-    return {cx:pivotX-Math.sin(angle)*radius, cy:y, cz:pivotZ-Math.cos(angle)*radius,
-      a:angle, f:FOCAL_LENGTH, pitch:Math.atan2(y-aimY,radius), aspect};
+    return {cx:pivotX-Math.sin(angle)*radius, cy:aimY+Math.tan(pitch)*radius, cz:pivotZ-Math.cos(angle)*radius,
+      a:angle, f:FOCAL_LENGTH, pitch, aspect};
   }
 
   function brakingPitch(state) {
@@ -604,10 +611,10 @@
   }
 
   function projectDisc(body,cam) {
-    // The mountain panorama curves down with distance. Put each disc on the
-    // same curved backdrop at the ridge distance, behind the mountain mesh.
+    // Place each disc on the curved backdrop beyond the ridge so low sun
+    // and moon sit inside the narrow strip of sky above the mountains.
     const ca=Math.cos(cam.a), sa=Math.sin(cam.a), cp=Math.cos(cam.pitch), sp=Math.sin(cam.pitch);
-    const scale=250/Math.hypot(body.x,body.z);
+    const scale=FAR/Math.hypot(body.x,body.z);
     const forward=scale*(body.x*sa+body.z*ca);
     const dy=body.y*scale-15-cam.cy+.64*groundBend(forward);
     const depth=forward*cp-dy*sp;
