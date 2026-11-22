@@ -51,7 +51,7 @@
   }
   const rankingPrefix = 'busstation3.result.';
   const memoryScores = new Map();
-  let renderer, view = 'home', panel = '', scoreId = '', scoreSaved = false, lastHud = -1;
+  let renderer, view = 'loading', panel = '', scoreId = '', scoreSaved = false, lastHud = -1;
   const heldControls = new Map();
   let drag = null;
   let graphicsLost = false;
@@ -66,6 +66,73 @@
   const game = window.BusDrive.create({ onUpdate: update, onEvent: event, onFinish: finish });
   game.setVolume(volume / 100);
   game.setSound(soundOn);
+
+  const demo = {phase:'demo', introProgress:1, time:0, roadZ:0, speed:54,
+    laneX:0, heading:0, objects:[], impacts:[], lap:1, lapProgress:0};
+  const demoPeriodSeconds = 12;
+  const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+  let demoFrame, lastDemoTime;
+
+  function drawDemo(now) {
+    const dt = lastDemoTime === undefined ? 0 : Math.min((now - lastDemoTime) / 1000, .5);
+    lastDemoTime = now;
+    demo.time += dt;
+    // roadZ measures forward travel; the actual lane also curves sideways.
+    const slope = window.BusDrive.roadSlope(demo.roadZ);
+    demo.roadZ += demo.speed / 3.6 * dt / Math.hypot(1, slope);
+    const period = demo.time / demoPeriodSeconds;
+    demo.lap = 1 + Math.floor(period);
+    demo.lapProgress = period % 1;
+    renderer.render(demo);
+    if (!reducedMotion.matches) demoFrame = requestAnimationFrame(drawDemo);
+  }
+
+  function syncDemo() {
+    cancelAnimationFrame(demoFrame);
+    lastDemoTime = undefined;
+    if (view !== 'home') return;
+    const unavailable = !renderer || graphicsLost;
+    cabinet.toggleAttribute('data-demo-unavailable', unavailable);
+    road.hidden = unavailable;
+    if (!unavailable && !document.hidden && !modal.open) demoFrame = requestAnimationFrame(drawDemo);
+  }
+
+  function loadArcade() {
+    const minimumMs = 5000;
+    const bar = $('loading-progress'), percent = $('loading-percent');
+    let startedAt, ready = false;
+    function progress(now) {
+      startedAt ??= now;
+      const value = Math.min(ready ? 100 : 95, Math.floor(100 * (now - startedAt) / minimumMs));
+      if (bar.value !== value) {
+        bar.value = value;
+        percent.textContent = value + ' %';
+      }
+      if (value < 100) requestAnimationFrame(progress);
+      else requestAnimationFrame(() => {
+        $('loading-screen').hidden = true;
+        document.querySelector('.topbar').inert = false;
+        document.querySelector('.shell').inert = false;
+        home(false);
+      });
+    }
+    requestAnimationFrame(progress);
+    // Paint the cover before preparing the shaders and the first section of road.
+    Promise.allSettled([$('loading-art').decode(), document.fonts.ready]).then(() => {
+      requestAnimationFrame(() => {
+        road.hidden = false;
+        try {
+          renderer = window.BusWorld.init(road);
+          renderer.render(demo);
+        } catch {
+          renderer?.dispose();
+          renderer = null;
+          road.hidden = true;
+        }
+        ready = true;
+      });
+    });
+  }
 
   function refreshSound() {
     const control = $('sound');
@@ -174,7 +241,8 @@
     delete cabinet.dataset.phase;
     document.body.classList.toggle('in-race', active);
     $('attract').hidden = active;
-    road.hidden = !active;
+    road.hidden = false;
+    road.setAttribute('aria-hidden', String(!active));
     health.hidden = !active;
     if (active) hearts.set(3, false);
     $('pause').hidden = !active;
@@ -183,11 +251,14 @@
     lastHud = -1;
   }
   function start() {
-    closeDialog();
+    if (view === 'loading') return;
     view = 'run';
+    closeDialog();
     showRun(true);
-    try { renderer ||= window.BusWorld.init(road); }
-    catch {
+    if (!renderer && !graphicsLost) {
+      try { renderer = window.BusWorld.init(road); } catch { /* Show the rendering error below. */ }
+    }
+    if (!renderer || graphicsLost) {
       home();
       openDialog('error','gamepad','Rendu indisponible','<p class="modal-desc">La scène de jeu n’a pas pu démarrer. Recharge la page pour réessayer.</p><button class="secondary" data-action="close">Fermer</button>');
       return;
@@ -199,13 +270,13 @@
     cabinet.focus({preventScroll:true});
     if (window.scrollY > 0) window.scrollTo(0, 0);
   }
-  function home() {
-    closeDialog();
-    game.stop();
+  function home(focusPlay = true) {
+    if (view !== 'loading') game.stop();
     view = 'home';
     showRun(false);
+    closeDialog();
     hud({score:0,distance:0,lap:1,speed:0,health:3});
-    $('play').focus({preventScroll:true});
+    if (focusPlay) $('play').focus({preventScroll:true});
   }
   function openDialog(kind, symbol, heading, html, reveal = false) {
     releaseControls();
@@ -229,6 +300,7 @@
       $('arcade-tab').setAttribute('aria-current','page');
     }
     if (!modal.open) modal.showModal();
+    syncDemo();
     const focus = kind === 'finish' ? title : body.querySelector('[data-initial-focus]') || $('close-modal');
     if (!focus.hidden) focus.focus({preventScroll:true});
   }
@@ -240,6 +312,7 @@
     $('scores-tab').removeAttribute('aria-current');
     $('arcade-tab').classList.add('selected');
     $('arcade-tab').setAttribute('aria-current','page');
+    syncDemo();
   }
   function pauseGame() {
     if (view !== 'run') return;
@@ -516,6 +589,7 @@
   for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) road.addEventListener(name, finishPointer);
   road.addEventListener('webglcontextlost', () => {
     graphicsLost = true;
+    syncDemo();
     if (game.state.status === 'running') pauseGame();
     if (panel === 'pause') {
       const resumeButton = body.querySelector('[data-action="resume"]');
@@ -525,13 +599,20 @@
   });
   road.addEventListener('webglcontextrestored', () => {
     graphicsLost = false;
+    syncDemo();
     if (view === 'run' && game.state.status === 'paused') {
       requestAnimationFrame(() => renderer.render(game.state));
       if (panel === 'pause') pauseGame();
     }
   });
-  document.addEventListener('visibilitychange',() => { if (document.hidden && game.state.status === 'running') pauseGame(); });
+  document.addEventListener('visibilitychange',() => {
+    if (document.hidden && game.state.status === 'running') pauseGame();
+    syncDemo();
+  });
+  reducedMotion.addEventListener('change', syncDemo);
+  window.addEventListener('resize', () => { if (reducedMotion.matches) syncDemo(); });
   window.addEventListener('blur',() => { if (game.state.status === 'running') pauseGame(); });
   window.addEventListener('storage',e => { if (panel === 'scores' && e.key?.startsWith(rankingPrefix)) scores(); });
   refreshSound();
+  loadArcade();
 })();

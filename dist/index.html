@@ -8,16 +8,27 @@
   <title>Bus Station 3 · Arcade</title>
   <link rel="icon" href="assets/bus-mark.svg" type="image/svg+xml">
   <link rel="preload" href="assets/col-des-pins.webp" as="image">
-  <link rel="stylesheet" href="style.css?v=10">
+  <link rel="stylesheet" href="style.css?v=11">
   <link rel="stylesheet" href="heart-meter.css">
   <script src="assets/vendor/number-flow-0.6.2.js" defer></script>
   <script src="drive.js?v=8" defer></script>
-  <script src="world.js?v=8" defer></script>
+  <script src="world.js?v=9" defer></script>
   <script src="heart-meter.js" defer></script>
-  <script src="arcade.js?v=8" defer></script>
+  <script src="arcade.js?v=9" defer></script>
 </head>
 <body>
-  <header class="topbar">
+  <section class="loading-screen" id="loading-screen" aria-labelledby="loading-title">
+    <img class="key-art" id="loading-art" src="assets/col-des-pins.webp" width="1254" height="1254" alt="" fetchpriority="high">
+    <div class="loading-copy">
+      <h1 class="wordmark" id="loading-title" aria-label="Bus Station 3"><span class="line-one">BUS</span><span class="line-two">STATION <b>3</b></span></h1>
+      <div class="loading-meter">
+        <label for="loading-progress">Chargement</label><span id="loading-percent" aria-hidden="true">0 %</span>
+        <progress id="loading-progress" max="100" value="0"></progress>
+      </div>
+      <noscript>Active JavaScript pour jouer à Bus Station 3.</noscript>
+    </div>
+  </section>
+  <header class="topbar" inert>
     <div class="topinner">
       <button class="brand" id="brand" aria-label="Bus Station 3, accueil">
         <img src="assets/bus-mark.svg" width="46" height="46" alt="">
@@ -36,11 +47,11 @@
       </div>
     </div>
   </header>
-  <main class="shell">
+  <main class="shell" inert>
     <section class="cabinet" id="cabinet" aria-label="Borne Bus Station 3" tabindex="-1">
       <div class="screen" id="screen">
-        <div class="attract" id="attract">
-          <div class="key-art"></div>
+        <canvas id="road" hidden aria-label="Route en 3D. Maintiens les flèches gauche et droite pour diriger le bus."></canvas>
+        <div class="attract" id="attract" hidden>
           <div class="home-copy">
             <div class="mode-label"><span class="checkers"></span> Course infinie</div>
             <h1 class="wordmark" aria-label="Bus Station 3"><span class="line-one">BUS</span><span class="line-two">STATION <b>3</b></span></h1>
@@ -49,7 +60,6 @@
           </div>
           <div class="track-tag"><i data-icon="pin"></i> Col des Pins</div>
         </div>
-        <canvas id="road" hidden aria-label="Route en 3D. Maintiens les flèches gauche et droite pour diriger le bus."></canvas>
         <div class="corner-actions">
           <button id="pause" class="glass-icon" aria-label="Mettre en pause" title="Pause (P)" hidden><i data-icon="pause"></i></button>
           <button id="expand" class="glass-icon" aria-label="Plein écran" title="Plein écran"><i data-icon="expand"></i></button>
@@ -101,6 +111,5 @@
       <div id="modal-body"></div>
     </div>
   </dialog>
-  <noscript>Active JavaScript pour jouer à Bus Station 3.</noscript>
 </body>
 </html>

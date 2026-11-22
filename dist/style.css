@@ -308,7 +308,7 @@ i[data-icon] {
   border:1px solid #4a3d53;
   border-radius:14px;
   background:#272131;
-  padding:3px 3px 0;
+  padding:3px;
   box-shadow:0 2px 4px #100e1740;
   position:relative;
   outline:none;
@@ -319,10 +319,14 @@ i[data-icon] {
   min-height:0;
   position:relative;
   isolation:isolate;
-  border-radius:10px 10px 6px 6px;
+  border-radius:10px;
   overflow:hidden;
   background:#282136;
   touch-action:manipulation;
+}
+
+body:not(.in-race) .dashboard-wrap {
+  display:none;
 }
 
 .attract,.key-art,#road {
@@ -332,37 +336,114 @@ i[data-icon] {
   height:100%;
 }
 
-.attract {
+.loading-screen {
+  position:fixed;
+  inset:0;
+  z-index:10;
   container-type:size;
   overflow:hidden;
   background:#392535;
 }
 
 /* Extend the forest at the edge of the square artwork behind the title. */
-.attract::before {
+.loading-screen::before {
   content:"";
   position:absolute;
   inset:0;
   background:linear-gradient(85deg,#211a2cda,#382539b8 44%,#36263b),url(assets/col-des-pins.webp) left 42% / 330% auto no-repeat;
 }
 
+body:has(.loading-screen:not([hidden])) {
+  overflow:hidden;
+}
+
 .key-art {
   left:auto;
   width:76%;
   width:min(76%,166cqh);
-  background:url(assets/col-des-pins.webp) 52% 51% / cover no-repeat;
+  object-fit:cover;
+  object-position:52% 51%;
   mask-image:linear-gradient(to right,transparent,#000 18%);
 }
 
-.home-copy {
+.loading-copy,.home-copy {
   position:relative;
   display:flex;
   align-items:flex-start;
   justify-content:center;
   flex-direction:column;
   height:100%;
-  padding:20px 0 22px clamp(27px,3.5vw,56px);
   isolation:isolate;
+}
+
+.loading-copy {
+  padding:24px max(6vw,env(safe-area-inset-left));
+}
+
+.loading-copy .wordmark {
+  font-size:clamp(57px,min(6.6vw,16vh),125px);
+  margin:0 0 clamp(26px,4vh,52px);
+}
+
+.loading-meter {
+  display:grid;
+  grid-template-columns:1fr auto;
+  gap:9px;
+  width:min(32vw,360px);
+  font-size:.85rem;
+  font-weight:700;
+  color:var(--cream);
+}
+
+.loading-meter label {
+  letter-spacing:.13em;
+  text-transform:uppercase;
+}
+
+#loading-percent {
+  font-variant-numeric:tabular-nums;
+  color:var(--yellow);
+}
+
+#loading-progress {
+  grid-column:1 / -1;
+  appearance:none;
+  width:100%;
+  height:9px;
+  overflow:hidden;
+  border:1px solid #fff0d24d;
+  border-radius:5px;
+  background:#271d30;
+  color:var(--yellow);
+}
+
+#loading-progress::-webkit-progress-bar {
+  background:#271d30;
+}
+
+#loading-progress::-webkit-progress-value {
+  background:var(--yellow);
+}
+
+#loading-progress::-moz-progress-bar {
+  background:var(--yellow);
+}
+
+.attract {
+  background:linear-gradient(90deg,#201b2be6 0%,#201b2ba8 22%,transparent 58%);
+  pointer-events:none;
+}
+
+.cabinet[data-demo-unavailable] .attract {
+  background:linear-gradient(90deg,#201b2be6,transparent 70%),url(assets/col-des-pins.webp) center / cover;
+}
+
+.home-copy {
+  padding:20px 0 22px clamp(27px,3.5vw,56px);
+}
+
+.home-copy button {
+  pointer-events:auto;
 }
 
 .mode-label,.track-tag,.effect,.glass-icon {
@@ -398,14 +479,13 @@ i[data-icon] {
 }
 
 .wordmark {
-  font:900 clamp(66px,5.75vw,89px)/.83 var(--display);
+  font:900 clamp(44px,min(5.3vw,11vh),80px)/.9 var(--display);
   letter-spacing:-.082em;
   transform:skew(-8deg) rotate(-3deg);
   transform-origin:0 55%;
   margin:24px 0 17px 3px;
   color:#fff0ce;
   text-shadow:0 1px #eddab7,0 2px #eabeb0,0 3px #ec776c,0 4px #e87368,0 5px #da685f,0 6px #a84651,1px 8px 0 #382638,2px 10px 0 #372437;
-  line-height:.9;
 }
 
 .line-one,.line-two {
@@ -859,6 +939,10 @@ kbd {
   display:block;
   touch-action:none;
   outline:none;
+}
+
+body:not(.in-race) #road {
+  touch-action:pan-y pinch-zoom;
 }
 
 .effect {
@@ -1319,9 +1403,6 @@ dialog.finish-reveal[open]::backdrop {
   .guide-item p {
     font-size:.72rem;
   }
-  .wordmark {
-    font-size:65px;
-  }
   .gauge-icon {
     width:37px;
     height:37px;
@@ -1452,26 +1533,18 @@ dialog.finish-reveal[open]::backdrop {
   }
   .cabinet {
     border-radius:11px;
-    padding:2px 2px 0;
+    padding:2px;
   }
   .screen {
-    border-radius:8px 8px 5px 5px;
+    border-radius:8px;
   }
-  .home-copy {
-    justify-content:flex-end;
-    padding:0 18px 24px;
-    pointer-events:none;
-  }
-  .home-copy button {
-    pointer-events:auto;
-  }
+  .home-copy { padding-inline:18px; }
   .mode-label {
     font-size:.57rem;
     padding:5px 8px;
     gap:6px;
   }
   .wordmark {
-    font-size:51px;
     line-height:.89;
     margin:13px 0 12px 2px;
   }
@@ -1623,9 +1696,6 @@ dialog.finish-reveal[open]::backdrop {
   .home-copy {
     padding-left:13px;
   }
-  .wordmark {
-    font-size:48px;
-  }
   .track-tag {
     display:none;
   }
@@ -1760,20 +1830,44 @@ dialog.finish-reveal[open]::backdrop {
 
 @media (max-aspect-ratio:1/1) {
   .cabinet { min-height: min(580px,calc(var(--viewport) - var(--topbar) - 2 * var(--edge))); }
-  .attract::before { background:linear-gradient(#443043,#241d2e); }
+  .loading-screen {
+    display:flex;
+    justify-content:center;
+    flex-direction:column;
+    background:#382a3c url(assets/col-des-pins.webp) 14% top / 380% auto no-repeat;
+  }
+  .loading-screen::before {
+    background:linear-gradient(to bottom,#312638bb,#382a3c 42%,#281e30);
+  }
   .key-art {
+    position:relative;
+    inset:auto;
     width:100%;
-    height:78%;
-    background-position:50% 51%;
-    mask-image:linear-gradient(to bottom,#000 70%,transparent 100%);
+    height:min(68cqh,110cqw);
+    mask-image:linear-gradient(to bottom,transparent,#000 8%,#000 75%,transparent);
+  }
+  .loading-copy {
+    height:auto;
+    margin-top:-5cqh;
+    padding:0 max(7vw,env(safe-area-inset-left)) max(12px,env(safe-area-inset-bottom));
+  }
+  .loading-copy .wordmark {
+    font-size:clamp(50px,11vw,98px);
+    margin-bottom:clamp(24px,3.4vh,40px);
+  }
+  .loading-meter { width:min(100%,360px); }
+  .attract {
+    background:linear-gradient(155deg,#201b2bd9,transparent 50%);
   }
   .home-copy {
-    justify-content:flex-end;
-    padding:0 clamp(16px,5vw,40px) clamp(16px,3.3vh,34px);
-    pointer-events:none;
+    justify-content:flex-start;
+    padding:clamp(14px,3vh,30px) clamp(16px,5vw,40px);
   }
-  .home-copy button { pointer-events:auto; }
-  .wordmark { font-size:clamp(47px,8vw,78px); }
+  .home-copy .wordmark {
+    font-size:clamp(32px,7vw,60px);
+    margin:12px 0 15px 2px;
+  }
+  .home-copy p { display:none; }
 }
 
 @media (max-height:530px) and (orientation:landscape) {

@@ -532,6 +532,19 @@
   function camera(state, aspect) {
     const distance = state.roadZ ?? state.distance ?? 0;
     const a = Math.atan(roadSlope(distance));
+    if (state.phase === 'demo') {
+      // Track the bus from inside the left shoulder as the centreline turns.
+      const side = 4.3, back = 7.6 * Math.max(1, .92 / aspect), height = 5.5;
+      const radius = Math.hypot(side, back), bearing = a + Math.atan2(side, back);
+      const wide = Math.max(0, Math.min(1, (aspect - .92) / .65));
+      const focal = 1.7;
+      // Leave room beside the bus in landscape and above it in portrait.
+      const pan = Math.atan(Math.min(.60, .36 * wide * aspect / focal));
+      const pitch = Math.atan2(height - 1.5, radius * Math.cos(pan))
+        - Math.atan((.37 - .10 * wide) / focal);
+      return {cx:roadX(distance) - radius * Math.sin(bearing), cy:height,
+        cz:distance - radius * Math.cos(bearing), a:bearing - pan, f:focal, pitch, aspect};
+    }
     const framing = Math.max(1, .70 / aspect);
     const back = 13.3 * framing;
     const height = 12.9 * framing;
@@ -591,9 +604,9 @@
   function lapLighting(state) {
     const lap=state.lap??1, p=Math.min(1,Math.max(0,state.lapProgress||0));
     const current=lapSkies[periodForLap(lap)], next=lapSkies[periodForLap(lap+1)];
-    // Ease into the next period over the final 60 m. Pausing, restarting and
-    // crossing the fourth lap all use the same distance-based state.
-    const end=Math.min(1,Math.max(0,(p-.94)/.06)), blend=end*end*(3-2*end);
+    // Races change light in the final 60 m. The showcase fades over four seconds.
+    const fade=state.phase==='demo' ? 1/3 : .06;
+    const end=Math.min(1,Math.max(0,(p-(1-fade))/fade)), blend=end*end*(3-2*end);
     const mix=(a,b,t=blend)=>a+(b-a)*t;
     const palette=key=>blend ? current[key].map((value,i)=>mix(value,next[key][i])) : current[key];
     const elevation=mix(current.elevation[0],current.elevation[1],p);
