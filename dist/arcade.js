@@ -34,7 +34,7 @@
   const health = $('health');
   const hearts = window.BusHearts.create(health);
   const noticeStatus = $('notice-status');
-  const impactTitles = {cone: 'Oups !', barrier: 'Boum !', oil: 'Ça glisse !', pothole: 'Crevé !'};
+  const noticeTitles = {cone: 'Oups !', barrier: 'Boum !', oil: 'Ça glisse !', pothole: 'Crevé !', rocket: 'Fusée !'};
   const pendingNotices = [];
   const gauges = Object.fromEntries(['score','distance','lap','speed'].map(key => [key, $(key)]));
   const lapNumber = new Intl.NumberFormat('fr-FR', {minimumIntegerDigits: 2});
@@ -219,7 +219,9 @@
     setDial(gauges.lap, state.lap, rolling);
     setDial(gauges.speed, Math.round(state.speed), rolling);
     const canSpin = state.phase === 'driving' && state.jump?.long && !state.jump.spinDirection;
-    const effectLabel = canSpin ? 'Braque pour un 360°' : state.slip ? 'Glissade' : state.boost ? 'Turbo'
+    const effectLabel = canSpin ? 'Braque pour un 360°'
+      : state.rocketRemaining > 0 ? 'Fusée · ' + Math.ceil(state.rocketRemaining) + ' m'
+      : state.slip ? 'Glissade' : state.boost ? 'Turbo'
       : state.flat ? 'Pneu crevé' : state.shoulderContact > 0 ? 'Accotement' : '';
     effect.hidden = !effectLabel;
     setText(effect,effectLabel);
@@ -238,7 +240,7 @@
     card.className = 'notice-card';
     const headline = document.createElement('strong');
     headline.className = 'notice-headline';
-    headline.textContent = points ? '+' + number.format(points) : impactTitles[type];
+    headline.textContent = points ? '+' + number.format(points) : noticeTitles[type];
     if (points) {
       const unit = document.createElement('small');
       unit.textContent = 'pts';
@@ -250,7 +252,7 @@
     card.append(headline, caption);
     notice.dataset.type = type;
     notice.replaceChildren(card);
-    noticeStatus.replaceChildren(points ? message + ' : +' + points + ' points' : impactTitles[type] + ' ' + message);
+    noticeStatus.replaceChildren(points ? message + ' : +' + points + ' points' : noticeTitles[type] + ' ' + message);
   }
   notice.addEventListener('animationend', e => {
     if (e.target !== notice.firstElementChild) return;

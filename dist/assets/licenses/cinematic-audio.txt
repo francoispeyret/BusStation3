@@ -28,3 +28,10 @@ https://opengameart.org/content/boing
 CC0 1.0 Universal — https://creativecommons.org/publicdomain/zero/1.0/
 L’adaptation pour le jeu accélère le ressort, raccourcit sa résonance et
 ajuste son volume. L’extrait est en mono à 24 kHz avec des fondus.
+
+Propulsion de la fusée (rocket-engine.wav)
+« Rocket Engine » de theMinesAreShakin, publié sur OpenGameArt le 17 décembre 2024.
+https://opengameart.org/content/rocket-engine
+CC0 1.0 Universal — https://creativecommons.org/publicdomain/zero/1.0/
+L’adaptation du jeu est une boucle mono de 2,7 secondes à 24 kHz. Le son
+est transposé vers les aigus, égalisé et atténué, avec un fondu au raccord.

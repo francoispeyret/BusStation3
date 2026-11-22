@@ -39,16 +39,20 @@
   const LONG_JUMP_SPEED = 72;
   const RAMP_KICK_KMH = 12;
   const RAMP_KICK_SECONDS = 0.35;
+  const ROCKET_METRES = 400;
+  const ROCKET_SPEED = 300;
+  const ROCKET_ACCELERATION = 55; // km/h per second
+  const ROCKET_BRAKING = 200; // km/h per second
   // Half-extents in metres, matching the visible road objects.
   const FOOTPRINTS = {
     cone: [0.46, 0.44], barrier: [1.12, 0.35], oil: [1.12, 0.97],
-    pothole: [1.12, 0.97], boost: [0.57, 0.20], repair: [0.56, 0.32]
+    pothole: [1.12, 0.97], boost: [0.57, 0.20], repair: [0.56, 0.32], rocket: [0.76, 0.55]
   };
   const HAZARDS = ['cone', 'barrier', 'oil', 'pothole'];
   const IMPACT_DURATIONS = { cone: 0.95, barrier: 0.76, oil: 0.68, repair: 0.85, boost: 0.50 };
   const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
   const choose = items => items[Math.floor(Math.random() * items.length)];
-  const isPickup = type => type === 'repair' || type === 'boost';
+  const isPickup = type => type === 'repair' || type === 'boost' || type === 'rocket';
   const roadX = z => 11 * Math.sin(z * 0.012) + 8 * Math.sin(z * 0.022 + 0.7);
   const roadSlope = z => 0.132 * Math.cos(z * 0.012) + 0.176 * Math.cos(z * 0.022 + 0.7);
 
@@ -120,6 +124,7 @@
     const horn = {url: 'assets/departure-horn.wav'};
     const airBrake = {url: 'assets/air-brake.wav'};
     const rampBoing = {url: 'assets/ramp-boing.wav'};
+    const rocketLoop = {url: 'assets/rocket-engine.wav'};
     const engineLevel = 0.25;
     const fullScaleGain = 0.45;
     let masterGain = fullScaleGain * 0.6;
@@ -134,6 +139,8 @@
     let driving = false;
     let shutdownStart, cueSource, cueMedia;
     let cueGeneration = 0;
+    let rocketActive = false;
+    let rocketSource, rocketGain, rocketMedia, rocketStop;
 
     function cueBytes(cue) {
       return cue.bytes ||= fetch(cue.url).then(response => {
@@ -157,6 +164,7 @@
       cueBytes(horn);
       cueBytes(airBrake);
       cueBytes(rampBoing);
+      cueBytes(rocketLoop);
     }
 
     function stopCue() {
@@ -207,11 +215,57 @@
       }
     }
 
+    function rocketAudible() {
+      return rocketActive && enabled && driving && masterGain > 0;
+    }
+
+    function syncRocket() {
+      clearTimeout(rocketStop);
+      if (!rocketAudible()) {
+        if (rocketMedia) rocketMedia.pause();
+        if (rocketSource) {
+          rocketGain.gain.setTargetAtTime(0, ctx.currentTime, 0.018);
+          rocketStop = setTimeout(() => {
+            rocketSource.stop();
+            rocketSource.disconnect();
+            rocketSource = null;
+          }, 100);
+        }
+        return;
+      }
+      if (!ctx || window.location?.protocol === 'file:') {
+        if (!window.Audio) return;
+        rocketMedia ||= new window.Audio(rocketLoop.url);
+        rocketMedia.loop = true;
+        rocketMedia.volume = masterGain;
+        if (rocketMedia.paused) rocketMedia.play().catch(() => {});
+        return;
+      }
+      cueBuffer(rocketLoop).then(buffer => {
+        // A decode may finish after a pause, a restart or the end of the boost.
+        if (!buffer || !rocketAudible()) return;
+        if (!rocketGain) {
+          rocketGain = ctx.createGain();
+          rocketGain.connect(master);
+        }
+        if (!rocketSource) {
+          rocketSource = ctx.createBufferSource();
+          rocketSource.buffer = buffer;
+          rocketSource.loop = true;
+          rocketSource.connect(rocketGain);
+          rocketGain.gain.setValueAtTime(0, ctx.currentTime);
+          rocketSource.start();
+        }
+        rocketGain.gain.setTargetAtTime(1, ctx.currentTime, 0.035);
+      });
+    }
+
     function syncPlayback() {
       const audible = enabled && driving && volume > 0;
       if (!enabled || !driving) stopCue();
       clearTimeout(stopTimer);
       syncVolume();
+      syncRocket();
       if (media) {
         media.playbackRate = pitch;
         if (audible && media.paused) media.play().catch(() => {});
@@ -311,6 +365,11 @@
     return {
       horn() { playCue(horn); },
       airBrake() { playCue(airBrake); },
+      setRocket(active) {
+        if (rocketActive === active) return;
+        rocketActive = active;
+        syncRocket();
+      },
       shutdown(progress) {
         shutdownStart ||= {pitch, volume};
         const remaining = 1 - clamp(progress, 0, 1);
@@ -332,6 +391,7 @@
         if (!Number.isFinite(value)) return;
         masterGain = fullScaleGain * clamp(value, 0, 1);
         syncVolume();
+        syncRocket();
       },
       setEnabled(value) {
         enabled = Boolean(value);
@@ -386,7 +446,7 @@
       distance: 0, roadZ: 0, speed: LAUNCH_SPEED, time: 0, laneX: 0,
       worldHeading: Math.atan(roadSlope(0)), heading: 0, steer: 0,
       shoulderContact: 0, rearWheels: [-1, 1].map(side => ({side, x: 0, z: 0, contact: 0})),
-      objects: [], impacts: [], jump: null, boost: 0, slip: 0, flat: false, hit: 0, score: 0, lap: 1,
+      objects: [], impacts: [], jump: null, boost: 0, rocketRemaining: 0, slip: 0, flat: false, hit: 0, score: 0, lap: 1,
       lapBiomes: ['hills'], lapProgress: 0, health: 3, gear: 3, rpm: 2200, braking: false
     };
     updateWheelContact(state);
@@ -401,6 +461,7 @@
     let wave = 0;
     let nextWave = 0;
     let nextRamp = 0;
+    let nextRocket = 0;
     let objectId = 0;
     let bonus = 0;
     let nextAudio = 0;
@@ -413,7 +474,7 @@
     function emit(type, message, points = 0) {
       bonus += points;
       state.score = Math.floor(state.distance) + bonus;
-      if (type !== 'dodge') audio.effect(type);
+      if (type !== 'dodge' && type !== 'rocket') audio.effect(type);
       onEvent({ type, message, points }, state);
     }
 
@@ -442,6 +503,10 @@
           if (Math.random() < doubleChance) addObject(others.find(other => other !== lane), z, choose(HAZARDS));
           if (wave % 4 === 2) addObject(safe, z, 'repair');
           else if (wave % 3 === 0) addObject(safe, z, 'boost');
+          else if (nextWave >= nextRocket) {
+            addObject(safe, z, 'rocket');
+            nextRocket = nextWave + 900 + Math.random() * 500;
+          }
         }
         const waveZ = nextWave;
         nextWave += Math.max(38, 59 - nextWave / 360) + Math.random() * 12;
@@ -464,7 +529,7 @@
         peak: 1.75 + 2.9 * momentum, height: RAMP.lipHeight * 0.5,
         spinDirection: 0, spinElapsed: 0, spinAngle: 0
       };
-      state.speed += RAMP_KICK_KMH;
+      state.speed = Math.min(ROCKET_SPEED, state.speed + RAMP_KICK_KMH);
       updateWheelContact(state);
       emit('jump', state.jump.long ? 'Grand saut !' : 'Saut de tremplin !', 100);
     }
@@ -482,7 +547,13 @@
       if (p === 1) state.jump = null;
     }
 
-    function encounter(type) {
+    function encounter(type, rocketProtected) {
+      if (type === 'rocket') {
+        state.rocketRemaining = ROCKET_METRES;
+        audio.setRocket(true);
+        emit(type, 'Cœurs protégés sur ' + ROCKET_METRES + ' m');
+        return;
+      }
       if (type === 'repair') {
         state.health = Math.min(3, state.health + 1);
         state.flat = false;
@@ -507,6 +578,7 @@
         emit(type, 'Cône renversé · Bus ralenti');
         return;
       }
+      if (rocketProtected) return;
       state.health = Math.max(0, state.health - 1);
       state.boost = 0;
       if (type === 'pothole') state.flat = true;
@@ -571,6 +643,8 @@
     function beginStop() {
       if (state.phase === 'stopping') return;
       state.phase = 'stopping';
+      state.rocketRemaining = 0;
+      audio.setRocket(false);
       phaseTime = 0;
       stopSpeed = state.speed;
       stopRpm = state.rpm;
@@ -604,14 +678,22 @@
       state.boost = Math.max(0, state.boost - dt);
       state.slip = Math.max(0, state.slip - dt);
 
-      if (state.jump) {
+      const powered = state.rocketRemaining > 0;
+      const previousSpeed = state.speed;
+      if (powered) {
+        const target = state.braking ? 34 : ROCKET_SPEED;
+        const change = (state.braking ? ROCKET_BRAKING : ROCKET_ACCELERATION) * dt;
+        state.speed += clamp(target - state.speed, -change, change);
+      } else if (state.jump) {
         state.speed = Math.max(state.jump.entrySpeed, state.speed - RAMP_KICK_KMH * dt / RAMP_KICK_SECONDS);
       } else {
         const cruise = Math.min(114, 78 + state.distance * 0.012);
         let target = (state.flat ? cruise * 0.70 : cruise) + (state.boost ? 39 : 0);
         if (state.braking) target = Math.min(34, target);
         target *= 1 - state.shoulderContact * (1 - SHOULDER_SPEED_FACTOR);
-        const rate = state.speed > target ? 62 : state.boost ? 36 : 13;
+        // Extra drag above the normal turbo and ramp speeds softens rocket burnout.
+        const deceleration = 62 + 1.5 * Math.max(0, state.speed - 165);
+        const rate = state.speed > target ? deceleration : state.boost ? 36 : 13;
         state.speed += clamp(target - state.speed, -rate * dt, rate * dt);
       }
       state.gear = Math.min(6, 1 + Math.floor(state.speed / 21));
@@ -620,7 +702,8 @@
       // Bicycle steering in world coordinates. Releasing the wheel straightens
       // the front tires; the driver keeps the new heading until countersteering.
       const grip = state.slip ? 0.55 : state.flat ? 0.74 : 1;
-      const path = state.speed * dt / 3.6;
+      // Powered steps use their entry speed so the last step can end at the exact metre.
+      const path = (powered ? previousSpeed : state.speed) * dt / 3.6;
       const response = steeringInput ? 9 : 15;
       const oldSteer = state.steer;
       state.steer += (steeringInput - oldSteer) * (1 - Math.exp(-response * dt));
@@ -637,6 +720,14 @@
       const x = roadX(state.roadZ) + state.laneX * LANE_WIDTH + path * Math.sin(midHeading);
       state.roadZ += travel;
       state.distance += path;
+      if (powered) {
+        state.rocketRemaining = Math.max(0, state.rocketRemaining - path);
+        if (state.rocketRemaining < 1e-8) {
+          state.rocketRemaining = 0;
+          if (state.jump) state.jump.entrySpeed = state.speed;
+          audio.setRocket(false);
+        }
+      }
       const newRoadAngle = Math.atan(roadSlope(state.roadZ));
       if (limitToRoadside(x, newRoadAngle)) {
         state.worldHeading += (newRoadAngle - state.worldHeading) * (1 - Math.exp(-7 * dt));
@@ -693,7 +784,8 @@
               speed: state.speed / 3.6, start: state.time, duration
             });
           }
-          encounter(object.type);
+          // A contact along the final powered metre is still protected.
+          encounter(object.type, powered || state.rocketRemaining > 0);
         } else if (object.z < -4.5) {
           object.passed = true;
           if (!isPickup(object.type)) dodgePoints += 10;
@@ -726,7 +818,10 @@
       // Bound physics catch-up and substep collisions, while keeping the shots on real time.
       if (state.phase === 'driving') remaining = Math.min(remaining, .20);
       while (remaining > 0.00001 && state.phase === 'driving') {
-        const step = Math.min(remaining, 1 / 40);
+        // Limit the distance between contact checks to one metre, even at full thrust.
+        const secondsPerMetre = 3.6 / Math.max(1, state.speed);
+        let step = Math.min(remaining, 1 / 40, secondsPerMetre);
+        if (state.rocketRemaining > 0) step = Math.min(step, state.rocketRemaining * secondsPerMetre);
         advance(step);
         remaining -= step;
       }
@@ -758,6 +853,7 @@
       start() {
         cancelAnimationFrame(frameId);
         Object.assign(state, startingState());
+        audio.setRocket(false);
         wave = objectId = bonus = nextAudio = steeringInput = phaseTime = 0;
         if (!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
           state.phase = 'starting';
@@ -771,6 +867,7 @@
         }
         nextWave = 55;
         nextRamp = 77 + Math.random() * 22;
+        nextRocket = 450 + Math.random() * 300;
         fillRoad();
         beginFrames();
         audio.horn();
@@ -815,6 +912,8 @@
         cancelAnimationFrame(frameId);
         state.status = 'stopped';
         state.jump = null;
+        state.rocketRemaining = 0;
+        audio.setRocket(false);
         steeringInput = 0;
         state.braking = false;
         audio.setDriving(false);
@@ -823,5 +922,5 @@
   }
 
   window.BusDrive = { create, roadX, roadSlope, periodForLap, sceneryForLap, SCENERY_NAMES,
-    lapAtRoadZ, roadZForLap, LANE_WIDTH, ROAD_HALF_WIDTH, DRIVABLE_HALF_WIDTH, RAMP };
+    lapAtRoadZ, roadZForLap, LANE_WIDTH, ROAD_HALF_WIDTH, DRIVABLE_HALF_WIDTH, RAMP, ROCKET_METRES };
 })();
