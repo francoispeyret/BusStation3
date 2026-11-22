@@ -7,6 +7,8 @@
   const {roadX, roadSlope, periodForLap, sceneryForLap, lapAtRoadZ, roadZForLap, DRIVABLE_HALF_WIDTH} = window.BusDrive;
   const LAP_SIGN_OFFSET = DRIVABLE_HALF_WIDTH + 2.85;
   const {Mesh,rgb,random,lettering} = window.BusMesh;
+  const fleet = window.BusModels;
+  const fleetById = new Map(fleet.models.map(model => [model.id, model]));
   const {CHUNK,LANE,ROAD,biomeFor,routeThemeAt,terrainScale,terrainHeight:heightAtOffset,terrainHeightAt,surfaceColorAt,shoulderColorAt,
     skylineScaleAt,themesInSection,isRoadsideActorVisible,roadsideScenery,biomeModelMesh,
     biomeActorsInSection,biomeActorPose} = window.BusRoute;
@@ -178,126 +180,6 @@
     lettering(m,townName,x,nameTop,z-.12,namePixel,ink);
     lettering(m,lapLabel,x,y+4+2.5*lapPixel,z-.12,lapPixel,ink);
     if(m.layers) m.layers.push({offset:m.data.length,layer:0,side:0,end:0});
-  }
-
-  function wheel(m,side,z,segments=14) {
-    const x=side*1.16, y=.52;
-    const loop=(offset,rad,col) => {
-      const a=x+side*offset;
-      for(let i=0;i<segments;i++) {
-        const u=i*TAU/segments, v=(i+1)*TAU/segments;
-        m.tri([a,y,z],[a,y+rad*Math.cos(u),z+rad*Math.sin(u)],[a,y+rad*Math.cos(v),z+rad*Math.sin(v)],col);
-      }
-    };
-    for(let i=0;i<segments;i++) {
-      const u=i*TAU/segments,v=(i+1)*TAU/segments, ax=x+side*.12, bx=x-side*.17;
-      m.quad([ax,y+.46*Math.cos(u),z+.46*Math.sin(u)],[bx,y+.46*Math.cos(u),z+.46*Math.sin(u)],[bx,y+.46*Math.cos(v),z+.46*Math.sin(v)],[ax,y+.46*Math.cos(v),z+.46*Math.sin(v)],'#35444b');
-    }
-    loop(.12,.46,'#313d44'); loop(.125,.28,'#dfd8bb');
-    if(segments>8) { loop(.13,.18,'#75888a'); loop(.135,.095,'#cfd8ce'); }
-  }
-
-  function bus(lowDetail = false) {
-    const m=new Mesh();
-    // Canvas draws exterior trim after the body and luggage after the rack.
-    // A triangle's centre depth alone cannot order small decals on a long face.
-    const layers = [];
-    const mark = (layer, side=0, end=0) => {
-      if (lowDetail) layers.push({offset:m.data.length, layer, side, end});
-    };
-    // Both renderers read the lens material from the unused red-channel range.
-    function markLens(first,tag) {
-      for(let i=first+3;i<m.data.length;i+=6) m.data[i]+=tag;
-    }
-    m.layers = layers;
-    m.shell([[1.02,.34,2.40,.16],[1.16,.52,2.57,.22],[1.18,1.35,2.61,.25]],'#d84b3a');
-    m.shell([[1.181,1.32,2.611,.25],[1.185,1.54,2.614,.25]],'#fff0ce');
-    m.shell([[1.181,1.53,2.611,.25],[1.17,1.65,2.59,.25],[1.13,2.66,2.49,.25]],'#fff8df');
-    m.shell([[1.14,2.61,2.51,.25],[1.16,2.73,2.53,.28],[1.04,2.9,2.37,.34],[.9,2.94,2.25,.32]],'#f7edd1');
-    mark(1,0,-1);
-    m.box(0,.54,-2.609,2.14,.135,.16,'#d3d5bf');
-    m.box(0,.51,-2.68,1.4,.047,.04,'#82918d');
-    function panel(x,y,w,h,r,z,col) {
-      if (lowDetail && z<0) {
-        m.quad([x-w/2,y-h/2,z],[x+w/2,y-h/2,z],[x+w/2,y+h/2,z],[x-w/2,y+h/2,z],col);
-        return;
-      }
-      const ring=[];
-      const steps=lowDetail?1:3;
-      for(const [dx,dy,start] of [[1,1,0],[-1,1,.25],[-1,-1,.5],[1,-1,.75]]) {
-        for(let j=0;j<=steps;j++) {
-          const a=(start+j/(4*steps))*TAU;
-          ring.push([x+dx*(w/2-r)+r*Math.cos(a),y+dy*(h/2-r)+r*Math.sin(a),z]);
-        }
-      }
-      for(let j=0;j<ring.length;j++) m.tri([x,y,z],ring[j],ring[(j+1)%ring.length],col);
-    }
-    panel(0,2.073,2.03,.83,.13,-2.621,'#d0c6aa');
-    panel(0,2.073,1.96,.77,.105,-2.638,'#3b4f59');
-    for(const dir of [-1,1]) panel(dir*.47,2.075,.85,.651,.07,-2.648,'#538294');
-    for(const k of [-.865,.075]) {
-      m.quad([k,2.29,-2.651],[k+.57,2.29,-2.651],[k+.70,2.36,-2.651],[k+.11,2.36,-2.651],'#83a8b0');
-    }
-    panel(0,2.604,.63,.232,.07,-2.64,'#decbad');
-    panel(0,2.604,.58,.197,.055,-2.652,'#374b50');
-    lettering(m,'03',0,2.67,-2.658,.029,'#ffdf89');
-    m.box(0,.76,-2.622,.58,.2,.045,'#ffdb89');
-    if (!lowDetail) lettering(m,'BS3',0,.917,-2.648,.0205,'#455257');
-    for(const s of [-1,1]) {
-      mark(1,0,-1);
-      m.box(s*.93,.78,-2.61,.215,.34,.08,'#703d38');
-      m.box(s*.93,.94,-2.658,.16,.106,.021,'#ffc66a');
-      const tailLens=m.data.length;
-      m.box(s*.93,.82,-2.658,.16,.10,.021,'#fb7760');
-      markLens(tailLens,4);
-      mark(1,s);
-      for(let j=0;j<4;j++) {
-        const z=-1.67+j*1.03;
-        m.box(s*1.129,1.68,z,.115,.85,.88,'#405962');
-        m.box(s*1.19,1.77,z,.02,.66,.73,'#5d98a4');
-        m.box(s*1.203,2.19,z,.014,.19,.72,'#77aeb7');
-      }
-      for(const z of [-1.55,1.54]) wheel(m,s,z,lowDetail?8:14);
-      m.box(s*1.25,2.1,1.77,.27,.055,.09,'#586a68');
-      m.box(s*1.39,2.01,1.77,.11,.25,.15,'#52666a');
-    }
-    mark(1,0,-1);
-    for(let i=0;i<4;i++) m.box(.56,1.00+i*.077,-2.622,.52,.024,.018,'#b34b3d');
-    // A destination blind, split windscreen and warm headlamps face the direction of travel.
-    mark(1,0,1);
-    panel(0,2.08,2.02,.94,.13,2.621,'#bcb99f');
-    panel(0,2.08,1.96,.89,.11,2.634,'#394e55');
-    for(const side of [-1,1]) {
-      const x=side*.476;
-      panel(x,2.08,.896,.785,.085,2.641,'#639aa4');
-      m.quad([x-.40,2.16,2.646],[x+.23,2.43,2.646],[x+.40,2.43,2.646],[x-.06,2.16,2.646],'#91bdbe');
-      m.quad([x-.34,1.75,2.652],[x-.32,1.72,2.652],[x+.28,1.91,2.652],[x+.28,1.95,2.652],'#344e53');
-      panel(side*.82,1.06,.38,.29,.135,2.622,'#9b5547');
-      const lens=m.data.length;
-      panel(side*.82,1.06,.31,.233,.11,2.633,'#efe6c5');
-      panel(side*.82,1.07,.235,.16,.075,2.645,'#fff3b7');
-      markLens(lens,2);
-      panel(side*.9,1.30,.15,.09,.04,2.626,'#ffc169');
-    }
-    panel(0,2.694,.70,.245,.09,2.555,'#415451');
-    lettering(m,'03',0,2.78,2.562,.036,'#ffdd83',-1);
-    panel(0,1.15,.65,.20,.085,2.627,'#a04236');
-    for(const y of [1.10,1.16,1.22]) panel(0,y,.53,.019,.008,2.634,'#ebbe96');
-    m.box(0,.55,2.608,2.13,.15,.17,'#dddac3');
-    panel(0,.815,.51,.15,.025,2.637,'#f2d490');
-    lettering(m,'BS3',0,.865,2.641,.020,'#4c5755',-1);
-    mark(2);
-    for(const s of [-1,1]) {
-      m.box(s*.77,2.94,.23,.055,.13,2.26,'#838f88');
-      m.box(s*.77,3.08,.23,.059,.047,2.28,'#c7d0be');
-    }
-    for(let i=0;i<5;i++) m.box(0,2.982,-.85+i*.54,1.54,.05,.075,'#9aa8a0');
-    mark(3);
-    m.box(-.30,3.048,-.30,.66,.31,.89,'#d6ac68');
-    for(const z of [-.61,.00]) m.box(-.30,3.047,z,.67,.318,.055,'#9b714b');
-    m.box(.35,3.045,.42,.53,.23,.72,'#75a399');
-    for(const z of [.17,.66]) m.box(.35,3.046,z,.545,.237,.044,'#4f7d76');
-    return m;
   }
 
   const IMPACT_MESHES = ['waterRipple','waterDrop','repairHalo','repairSpark','boostHalo'];
@@ -503,12 +385,12 @@
   const FOCAL_LENGTH = 1.55;
   const SKY_FRACTION = 1/6;
   const RIDGE_PITCH = Math.atan((1-2*SKY_FRACTION)/FOCAL_LENGTH);
-  function camera(state, aspect) {
+  function camera(state, aspect, bus) {
     const distance = state.roadZ ?? state.distance ?? 0;
     const a = Math.atan(roadSlope(distance));
     if (state.phase === 'demo') {
-      // Track the bus from inside the left shoulder as the centreline turns.
-      const side = 4.3, back = 7.6 * Math.max(1, .92 / aspect), height = 5.5;
+      // Keep the same three-quarter view through a swap, with room for the longest coach.
+      const side = 5.75, back = 8.6 * Math.max(1, .92 / aspect), height = 5.65;
       const radius = Math.hypot(side, back), bearing = a + Math.atan2(side, back);
       const wide = Math.max(0, Math.min(1, (aspect - .92) / .65));
       const focal = 1.7;
@@ -542,11 +424,12 @@
     // Orbit a point just inside the windscreen, then open the shot and lift the
     // sightline until position and tangent meet the normal chase camera.
     const angle = a + (Math.PI-.39)*remaining;
-    const minFrontRadius = 4.65;
+    const minFrontRadius = 4.65 + Math.max(0,bus.height-3.36)*.65;
     const frontRadius = Math.max(minFrontRadius,1.38+2.9/aspect);
     const radius = frontRadius*remaining + back*sweep;
-    const pivotX = roadX(distance) + follow*sweep + ((state.laneX||0)*LANE + Math.sin(a)*1.35)*remaining;
-    const pivotZ = distance + Math.cos(a)*1.35*remaining;
+    const frontPivot = bus.headlamp[2] * .51;
+    const pivotX = roadX(distance) + follow*sweep + ((state.laneX||0)*LANE + Math.sin(a)*frontPivot)*remaining;
+    const pivotZ = distance + Math.cos(a)*frontPivot*remaining;
     // Pulling back for the portrait close-up also reveals more of the horizon.
     const frontPitch = RIDGE_PITCH-.06 + Math.atan((frontRadius-minFrontRadius)/32);
     const pitch = frontPitch*remaining + chasePitch*sweep;
@@ -684,7 +567,7 @@
     varying lowp vec3 color;
     uniform vec3 coachOffset;
     uniform mat3 coachFrame;
-    varying mediump vec3 lampPoint;
+    varying mediump vec3 busPoint;
     varying lowp float lens;
     ${lightCoordinates}
     uniform vec4 nearBounds, farBounds;
@@ -694,7 +577,7 @@
     varying lowp float shadowVisibility;
     void main() {
       vec3 w = offset + model * aPos;
-      lampPoint = (w - coachOffset) * coachFrame - vec3(0.,1.06,2.645);
+      busPoint = (w - coachOffset) * coachFrame;
       float isLamp=step(1.9,aColor.r), isTail=step(3.9,aColor.r), isSign=step(5.9,aColor.r);
       lens = isSign>.5 ? .5 : isLamp-2.*isTail;
       color = aColor - vec3(2.*(isLamp+isTail+isSign),0.,0.);
@@ -715,9 +598,10 @@
     }`;
   const fragmentCode=`${shaderPrecision}
     varying lowp vec3 color;
-    varying mediump vec3 lampPoint;
+    varying mediump vec3 busPoint;
     varying lowp float lens;
     uniform lowp float opacity, shadowStrength, headlamps;
+    uniform mediump vec3 headlamp, taillamp;
     uniform mediump vec3 ambientTint, fogColor;
     uniform mediump sampler2D nearShadow, farShadow;
     varying mediump vec4 shadowUV;
@@ -740,7 +624,7 @@
       if(p.z<=0. || p.z>=56.) return 0.;
       // The dipped axes meet the road roughly 15 m ahead. The beams first
       // form separate pools, then overlap as their angular width increases.
-      float axis=.82+.055*p.z, width=.26+.18*p.z;
+      float axis=headlamp.x+.055*p.z, width=.26+.18*p.z;
       float vertical=(p.y+.070*p.z)/(.20+.18*p.z);
       vec2 lateral=(p.x+vec2(-axis,axis))/width;
       vec2 beam=1.-smoothstep(vec2(.04),vec2(1.35),lateral*lateral+vertical*vertical);
@@ -757,12 +641,13 @@
       }
       vec3 lit=color*ambientTint*mix(vec3(1.),vec3(.58,.64,.72),shade*shadowStrength);
       if(headlamps>0.) {
+        vec3 lampPoint=busPoint-vec3(0.,headlamp.yz);
         lit+=headlamps*beamLight(lampPoint)*(color*vec3(.93,.78,.50)+vec3(.065,.045,.012));
         // Warm spill on the immediate housing leaves the lenses brighter than the grille.
-        vec3 toLens=vec3(abs(lampPoint.x)-.82,lampPoint.y,2.*lampPoint.z);
+        vec3 toLens=vec3(abs(lampPoint.x)-headlamp.x,lampPoint.y,2.*lampPoint.z);
         float housing=1.-smoothstep(.09,.36,length(toLens));
         lit+=headlamps*housing*vec3(.34,.22,.08);
-        vec3 toTail=vec3(abs(lampPoint.x)-.93,lampPoint.y+.19,2.*(lampPoint.z+5.31));
+        vec3 toTail=(vec3(abs(busPoint.x),busPoint.yz)-taillamp)*vec3(1.,1.,2.);
         lit+=headlamps*(1.-smoothstep(.045,.22,length(toTail)))*vec3(.27,.018,.009);
         vec3 lampTint=lens<0. ? vec3(1.42,.46,.30) : vec3(1.16,1.09,1.03);
         lit=mix(lit,min(vec3(1.),color*lampTint),headlamps*abs(lens));
@@ -814,7 +699,8 @@
   }
 
   function gpuRenderer(canvas,gl,is2) {
-    let scene,sky,uniform,skyUniform,skyBuffer,coach,trail,range,items, lost=false;
+    let scene,sky,uniform,skyUniform,skyBuffer,trail,range,items, lost=false;
+    const coaches = new Map();
     const updateSpray=shoulderSpray();
     let sprayBuffer;
     let caster,filter,casterUniform,filterUniform,rawMap,blurMap,nearMap,farMap;
@@ -864,7 +750,7 @@
       filter=program(gl,is2,filterVertex,filterFragment);
       skyUniform=locations(sky,['discs','aspect','horizonY','night','horizonColor','zenithColor']);
       uniform=locations(scene,['offset','model','cameraAngles','projection','opacity','ambientTint','fogColor',
-        'coachOffset','coachFrame','headlamps','shadowStrength','lightSlope','farLightSlope',
+        'coachOffset','coachFrame','headlamp','taillamp','headlamps','shadowStrength','lightSlope','farLightSlope',
         'cameraHeight','nearBounds','farBounds','nearShadow','farShadow']);
       casterUniform=locations(caster,['offset','model','lightSlope','cameraHeight','bounds','opacity']);
       filterUniform=locations(filter,['source','stepUV']);
@@ -883,11 +769,11 @@
       skyBuffer=gl.createBuffer();
       gl.bindBuffer(gl.ARRAY_BUFFER,skyBuffer);
       gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
-      coach=upload(bus());
+      coaches.clear();
       range=upload(backdrop());
       const streak=new Mesh();
       for(const side of [-1,1]) for (const [x,l] of [[.94,1.5],[1.09,.88]]) {
-        streak.tri([side*(x-.038),0,-2.30],[side*(x+.038),0,-2.30],[side*x,0,-2.30-l],'#ffcc66');
+        streak.tri([side*(x-.038),0,0],[side*(x+.038),0,0],[side*x,0,-l],'#ffcc66');
       }
       trail=upload(streak);
       sprayBuffer=gl.createBuffer();
@@ -932,7 +818,9 @@
       gl.viewport(0,0,w,h);
       gl.clear(gl.DEPTH_BUFFER_BIT);
       gl.useProgram(sky);
-      const d=s.roadZ ?? s.distance ?? 0, t=s.time||0, lane=s.laneX||0, cam=camera(s,w/h);
+      const bus=fleetById.get(s.busModel)||fleet.models[0], busOpacity=s.busOpacity??1;
+      if(!coaches.has(bus)) coaches.set(bus,upload(fleet.mesh(bus.id)));
+      const d=s.roadZ ?? s.distance ?? 0, t=s.time||0, lane=s.laneX||0, cam=camera(s,w/h,bus);
       const light=lapLighting(s), sun=light.direction;
       const solar=light.night<1 && projectDisc(light.sun,cam);
       const lunar=light.night>0 && projectDisc(light.moon,cam);
@@ -1021,8 +909,10 @@
       const speed=Math.min(1,(s.speed||0)/70);
       const roll=(s.steer||0)*.072+(s.flat?.044+Math.sin(d*1.6)*.013:0)+(s.hit ? Math.sin(t*26)*.035*speed:0);
       const busY=.035+Math.sin(d*1.05)*speed*.018+(s.flat?0:Math.cos(d*.73)*.008),pitch=brakingPitch(s);
-      actors.push({casts:true,args:[coach,x,busY,d,a,roll,pitch]});
       const impacts=[];
+      const coachArgs=[coaches.get(bus),x,busY,d,a,roll,pitch,1,1,1];
+      if(busOpacity>=1) actors.push({casts:true,args:coachArgs});
+      else if(busOpacity>0) impacts.push({solid:true,alpha:busOpacity,args:coachArgs});
       impactParts(s,(type,x,y,z,yaw,roll,pitch,sx,sy,sz,alpha)=>{
         impacts.push({solid:type==='cone'||type==='barrier',alpha,args:[items[type],x,y,z,yaw,roll,pitch,sx,sy,sz]});
       });
@@ -1098,7 +988,9 @@
       gl.useProgram(scene);
       transformUniform=uniform;
       gl.uniform1f(uniform.shadowStrength,light.shadow);
-      gl.uniform1f(uniform.headlamps,light.night);
+      gl.uniform1f(uniform.headlamps,light.night*busOpacity);
+      gl.uniform3fv(uniform.headlamp,bus.headlamp);
+      gl.uniform3fv(uniform.taillamp,bus.taillamp);
       gl.uniform3f(uniform.coachOffset,x-cam.cx,busY-cam.cy,d-cam.cz);
       gl.uniformMatrix3fv(uniform.coachFrame,false,transform(a,roll,pitch));
       gl.uniform2f(uniform.lightSlope,sun.x/sun.y,sun.z/sun.y);
@@ -1109,7 +1001,10 @@
       gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,farMap.texture);
       gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,nearMap.texture);
       for(let i=start;i<=end;i++) draw(chunks.get(i),0,0,i*CHUNK);
-      if(s.boost) draw(trail,x,.12,d+.16*Math.sin(t*16),a);
+      if(s.boost) {
+        const behind=bus.taillamp[2]+.36+.16*Math.sin(t*16);
+        draw(trail,x+behind*Math.sin(a),.12,d+behind*Math.cos(a),a);
+      }
       for(const actor of actors) if(actor.visible!==false) draw(...actor.args);
       const chips=updateSpray(s);
       if(chips.length) {
@@ -1142,7 +1037,7 @@
       observe?.disconnect();
       canvas.removeEventListener('webglcontextlost',lostHandler);
       canvas.removeEventListener('webglcontextrestored',restoreHandler);
-      for(const model of [coach,range,trail,...Object.values(items),...chunks.values(),...animatedMeshes.values()]) gl.deleteBuffer(model.buf);
+      for(const model of [range,trail,...coaches.values(),...Object.values(items),...chunks.values(),...animatedMeshes.values()]) gl.deleteBuffer(model.buf);
       for(const target of [rawMap,blurMap,nearMap,farMap]) {
         gl.deleteFramebuffer(target.framebuffer);
         gl.deleteTexture(target.texture);
@@ -1180,7 +1075,6 @@
       return [low,high].flatMap(y=>[[-rx,y,-rz],[rx,y,-rz],[rx,y,rz],[-rx,y,rz]]);
     }
     const shadowProfiles={
-      bus:boxCorners(1.18,.15,2.94,2.58),
       cone:[...ring(.52,.04,.49),[0,1.15,0]],
       barrier:boxCorners(1.12,.05,1.28,.25),
       repair:boxCorners(.56,.50,1.36,.32),
@@ -1229,7 +1123,7 @@
       return out;
     }
     for(const type of ['cone','barrier','oil','pothole','boost','repair',...IMPACT_MESHES]) cars.set(type,faces(prop(type)));
-    cars.set('bus',faces(bus(true)));
+    const busShadows=new Map(fleet.models.map(bus=>[bus,boxCorners(bus.width/2,.15,bus.height,bus.length/2)]));
     function buildingModel(a,lowDetail) {
       const key=[a.type,a.side,a.variant,lowDetail].join('/');
       if(!cars.has(key)) {
@@ -1323,7 +1217,9 @@
         cachedSignLap=undefined;
         cachedRoute=lapBiomes;
       }
-      const c=camera(s,w/h), d=s.roadZ ?? s.distance ?? 0;
+      const bus=fleetById.get(s.busModel)||fleet.models[0], busOpacity=s.busOpacity??1;
+      if(!cars.has(bus)) cars.set(bus,faces(fleet.mesh(bus.id,true)));
+      const c=camera(s,w/h,bus), d=s.roadZ ?? s.distance ?? 0;
       const cs=Math.cos(c.a),sn=Math.sin(c.a),cp=Math.cos(c.pitch),sp=Math.sin(c.pitch);
       const focal=h*.5*c.f;
       // The extra margin covers long shadows and the relief blend on either side of a village.
@@ -1442,22 +1338,22 @@
       function beamPower(forward,height) {
         if(forward<=0 || forward>=56) return 0;
         const fade=Math.min(1,Math.max(0,(forward-16)/40));
-        const vertical=(height-1.06+.07*forward)/(.25+.16*forward);
+        const vertical=(height-bus.headlamp[1]+.07*forward)/(.25+.16*forward);
         return (1-fade*fade*(3-2*fade))*Math.max(0,1-vertical*vertical);
       }
       function headlightAt(x,height,z) {
-        if(light.night<=0) return 0;
-        const dx=x-busX,dz=z-d,forward=dx*lampSin+dz*lampCos-2.64;
+        if(light.night*busOpacity<=0) return 0;
+        const dx=x-busX,dz=z-d,forward=dx*lampSin+dz*lampCos-bus.headlamp[2];
         const power=beamPower(forward,height);
         if(!power) return 0;
         const lateral=dx*lampCos-dz*lampSin, width=.26+.18*forward;
         let total=0;
         for(const side of [-1,1]) {
-          const offset=(lateral-side*(.82+.055*forward))/width;
+          const offset=(lateral-side*(bus.headlamp[0]+.055*forward))/width;
           const falloff=Math.max(0,1-offset*offset);
           total+=falloff*falloff;
         }
-        return light.night*Math.min(1,total*power);
+        return light.night*busOpacity*Math.min(1,total*power);
       }
       const skylineScale=skylineScaleAt(d+185*cs,lapBiomes);
       for (let layer=0;layer<2 && skylineScale>0;layer++) {
@@ -1584,13 +1480,13 @@
         // the shadows. The two pools meet as they open up down the road.
         const layers=20;
         ctx.fillStyle='#f7dc9c';
-        ctx.globalAlpha=light.night*.40/layers;
+        ctx.globalAlpha=light.night*busOpacity*.40/layers;
         for(const side of [-1,1]) {
           const slices=[];
           for(let step=0;step<=32;step++) {
             const f=56*step/32;
-            const lateral=side*(.82+.055*f),z=d+(f+2.64)*lampCos-lateral*lampSin;
-            const x=busX+(f+2.64)*lampSin+lateral*lampCos;
+            const lateral=side*(bus.headlamp[0]+.055*f),forward=f+bus.headlamp[2];
+            const z=d+forward*lampCos-lateral*lampSin, x=busX+forward*lampSin+lateral*lampCos;
             slices.push({x,z,width:.26+.18*f,power:beamPower(f,receiverHeight(x,z))});
           }
           for(let i=0;i<layers;i++) {
@@ -1619,14 +1515,14 @@
       function drawLampGlows(a) {
         const dx=c.cx-a.x,dz=c.cz-a.z;
         const along=dx*lampSin+dz*lampCos,front=along>=0;
-        const facing=(Math.abs(along)-2.65)/Math.max(1,Math.hypot(dx,dz));
+        const [lx,ly,lz]=front?bus.headlamp:bus.taillamp;
+        const facing=(Math.abs(along)-Math.abs(lz))/Math.max(1,Math.hypot(dx,dz));
         if(facing<=0) return;
         const cr=Math.cos(a.roll),sr=Math.sin(a.roll),ct=Math.cos(a.pitch),st=Math.sin(a.pitch);
-        ctx.save();ctx.globalAlpha=light.night*Math.min(1,2*facing);
+        ctx.save();ctx.globalAlpha=light.night*busOpacity*Math.min(1,2*facing);
         for(const side of [-1,1]) {
-          const lx=side*(front?.82:.93),ly=front?1.07:.87,lz=front?2.65:-2.67;
-          const y=ly*ct-lz*st,z=ly*st+lz*ct,x=lx*cr-y*sr;
-          const p=point(a.x+x*lampCos+z*lampSin,a.y+lx*sr+y*cr,a.z-x*lampSin+z*lampCos);
+          const y=ly*ct-lz*st,z=ly*st+lz*ct,x=side*lx*cr-y*sr;
+          const p=point(a.x+x*lampCos+z*lampSin,a.y+side*lx*sr+y*cr,a.z-x*lampSin+z*lampCos);
           if(p[2]<.25) continue;
           const radius=(front?.34:.23)*focal/p[2],glow=ctx.createRadialGradient(p[0],p[1],0,p[0],p[1],radius);
           glow.addColorStop(0,front?'rgba(255,251,212,.9)':'rgba(255,63,29,.85)');
@@ -1758,7 +1654,7 @@
         actors.push({type:o.type,x:roadX(z)+o.lane*LANE,z,y:pickup?.12*Math.sin(t*3+z*.06):0,
           yaw:Math.atan(roadSlope(z))+(pickup?.29*Math.sin(t*2.5+z*.17):0),ground:o.type==='oil'||o.type==='pothole'});
       }
-      actors.push({type:'bus',x:busX,y:.025,z:d,
+      if(busOpacity>0) actors.push({type:'bus',x:busX,y:.025,z:d,alpha:busOpacity,
         yaw:busYaw,roll:(s.steer||0)*.072+(s.flat?.045:0),pitch:brakingPitch(s)});
       actors.push(...updateSpray(s));
       impactParts(s,(type,x,y,z,yaw,roll,pitch,sx,sy,sz,alpha)=>{
@@ -1766,7 +1662,7 @@
         actors.push({type,x,y,z,yaw,roll,pitch,sx,sy,sz,alpha,ground});
       });
       for (const a of actors) {
-        const centerY=a.type==='bus' ? 1.4 : (a.y||0)+(a.height||0)*.5;
+        const centerY=a.type==='bus' ? bus.height*.5 : (a.y||0)+(a.height||0)*.5;
         a.forward=(a.x-c.cx)*sn+(a.z-c.cz)*cs;
         a.depth=a.forward*cp-(centerY+groundBend(a.forward))*sp;
       }
@@ -1800,7 +1696,7 @@
           cars.set('lapSign',faces(mesh));
           cachedSignLap=a.lap;
         }
-        const type=modular ? cachedBiomeModel(a) : a.building ? buildingModel(a,focal/Math.max(1,base[2])<4) : a.type;
+        const type=a.type==='bus' ? bus : modular ? cachedBiomeModel(a) : a.building ? buildingModel(a,focal/Math.max(1,base[2])<4) : a.type;
         const scale=modular?a.size:undefined;
         model(type,a.x,a.y,a.z,a.yaw||0,a.roll||0,a.pitch,scale??a.sx,scale??a.sy,scale??a.sz,a.alpha,lamp);
         if(a.type==='bus'&&light.night>0) drawLampGlows(a);
@@ -1877,10 +1773,10 @@
       ctx.fillStyle=litColor(rgb('#283849'));
       for(const a of actors) {
         if(light.shadow<=.005) break;
-        const profile=a.type==='biomeModel' ? biomeShadows.get(cachedBiomeModel(a)) : shadowProfiles[a.type];
+        const profile=a.type==='bus' ? busShadows.get(bus) : a.type==='biomeModel' ? biomeShadows.get(cachedBiomeModel(a)) : shadowProfiles[a.type];
         if(profile) drawShadow(a,profile);
       }
-      if(light.night>0) drawHeadlightBeams();
+      if(light.night*busOpacity>0) drawHeadlightBeams();
       ctx.restore();
       function drawForestFir(a) {
         const base=point(a.x,a.y,a.z), top=point(a.x,a.y+a.size,a.z);

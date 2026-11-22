@@ -8,10 +8,11 @@
   <title>Bus Station 3 · Arcade</title>
   <link rel="icon" href="assets/bus-mark.svg" type="image/svg+xml">
   <link rel="preload" href="assets/col-des-pins.webp" as="image">
-  <link rel="stylesheet" href="style.css?v=12">
+  <link rel="stylesheet" href="style.css?v=13">
   <link rel="stylesheet" href="heart-meter.css">
   <script src="assets/vendor/number-flow-0.6.2.js" defer></script>
   <script src="mesh.js?v=2" defer></script>
+  <script src="bus-models.js?v=1" defer></script>
   <script src="biomes/catalog.js?v=2" defer></script>
   <script src="biomes/shared-models.js?v=2" defer></script>
   <script src="biomes/countryside.js?v=2" defer></script>
@@ -26,9 +27,9 @@
   <script src="biomes/snow.js?v=1" defer></script>
   <script src="drive.js?v=14" defer></script>
   <script src="biomes/route.js?v=2" defer></script>
-  <script src="world.js?v=14" defer></script>
+  <script src="world.js?v=15" defer></script>
   <script src="heart-meter.js" defer></script>
-  <script src="arcade.js?v=10" defer></script>
+  <script src="arcade.js?v=11" defer></script>
 </head>
 <body>
   <section class="loading-screen" id="loading-screen" aria-labelledby="loading-title">
@@ -70,6 +71,14 @@
             <h1 class="wordmark" aria-label="Bus Station 3"><span class="line-one">BUS</span><span class="line-two">STATION <b>3</b></span></h1>
             <p>Les accotements te permettent d’esquiver, mais ton bus y ralentit.</p>
             <button class="primary start" id="play"><i data-icon="play"></i> Jouer maintenant</button>
+          </div>
+          <div class="bus-picker" role="group" aria-label="Choix du bus">
+            <button class="bus-arrow" id="bus-prev" type="button" aria-label="Bus précédent"></button>
+            <div class="bus-plate">
+              <span class="bus-plate-meta" aria-hidden="true">Ton bus <span id="bus-model-count"></span></span>
+              <strong id="bus-model-name" role="status" aria-live="polite" aria-atomic="true"></strong>
+            </div>
+            <button class="bus-arrow" id="bus-next" type="button" aria-label="Bus suivant"></button>
           </div>
           <div class="track-tag"><i data-icon="pin"></i> Col des Pins</div>
         </div>

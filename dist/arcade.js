@@ -51,6 +51,9 @@
   }
   const rankingPrefix = 'busstation3.result.';
   const memoryScores = new Map();
+  const models = window.BusModels.models;
+  const modelKey = 'busstation3.busModel';
+  let modelIndex = 0;
   let renderer, view = 'loading', panel = '', scoreId = '', scoreSaved = false, lastHud = -1;
   const heldControls = new Map();
   let drag = null;
@@ -59,6 +62,8 @@
   let volume = Number(volumeSlider.defaultValue);
   let soundOn = true;
   try {
+    const savedModel = localStorage.getItem(modelKey);
+    modelIndex = Math.max(0, models.findIndex(model => model.id === savedModel));
     soundOn = localStorage.getItem('busstation3.sound') !== '0';
     const savedVolume = Number(localStorage.getItem('busstation3.volume'));
     if (Number.isInteger(savedVolume) && savedVolume > 0 && savedVolume <= 100) volume = savedVolume;
@@ -67,11 +72,44 @@
   game.setVolume(volume / 100);
   game.setSound(soundOn);
 
-  const demo = {phase:'demo', introProgress:1, time:0, roadZ:0, speed:54,
+  const demo = {phase:'demo', introProgress:1, time:0, roadZ:0, speed:54, busModel:models[modelIndex].id, busOpacity:1,
     laneX:0, heading:0, objects:[], impacts:[], lap:1, lapProgress:0};
   const demoPeriodSeconds = 12;
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
   let demoFrame, lastDemoTime;
+
+  function showModelName() {
+    setText($('bus-model-name'), models[modelIndex].name);
+    setText($('bus-model-count'), String(modelIndex + 1).padStart(2, '0') + ' / ' + String(models.length).padStart(2, '0'));
+  }
+
+  function selectModel(direction) {
+    modelIndex = (modelIndex + direction + models.length) % models.length;
+    showModelName();
+    try { localStorage.setItem(modelKey, models[modelIndex].id); } catch {}
+    if (reducedMotion.matches) syncDemo();
+  }
+
+  function fadeDemoBus(dt) {
+    const target = models[modelIndex].id;
+    if (reducedMotion.matches) {
+      demo.busModel = target;
+      demo.busOpacity = 1;
+      return;
+    }
+    // Reverse smoothly on a second click and spend any remaining frame time fading in.
+    let step = dt / .20;
+    if (demo.busModel !== target) {
+      if (step < demo.busOpacity) {
+        demo.busOpacity -= step;
+        return;
+      }
+      step -= demo.busOpacity;
+      demo.busOpacity = 0;
+      demo.busModel = target;
+    }
+    demo.busOpacity = Math.min(1, demo.busOpacity + step);
+  }
 
   function drawDemo(now) {
     const dt = lastDemoTime === undefined ? 0 : Math.min((now - lastDemoTime) / 1000, .5);
@@ -83,6 +121,7 @@
     const period = demo.time / demoPeriodSeconds;
     demo.lap = 1 + Math.floor(period);
     demo.lapProgress = period % 1;
+    fadeDemoBus(dt);
     renderer.render(demo);
     if (!reducedMotion.matches) demoFrame = requestAnimationFrame(drawDemo);
   }
@@ -267,6 +306,7 @@
     scoreId = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2,10);
     scoreSaved = false;
     releaseControls();
+    game.state.busModel = models[modelIndex].id;
     game.start();
     cabinet.focus({preventScroll:true});
     if (window.scrollY > 0) window.scrollTo(0, 0);
@@ -274,6 +314,8 @@
   function home(focusPlay = true) {
     if (view !== 'loading') game.stop();
     view = 'home';
+    demo.busModel = models[modelIndex].id;
+    demo.busOpacity = 1;
     showRun(false);
     closeDialog();
     hud({score:0,distance:0,lap:1,speed:0,health:3});
@@ -442,6 +484,8 @@
   });
   $('close-modal').addEventListener('click',dismiss);
   $('play').addEventListener('click',start);
+  $('bus-prev').addEventListener('click', () => selectModel(-1));
+  $('bus-next').addEventListener('click', () => selectModel(1));
   $('arcade-tab').addEventListener('click',enterArcade);
   $('brand').addEventListener('click',enterArcade);
   $('scores-tab').addEventListener('click',() => scores());
@@ -614,6 +658,7 @@
   window.addEventListener('resize', () => { if (reducedMotion.matches) syncDemo(); });
   window.addEventListener('blur',() => { if (game.state.status === 'running') pauseGame(); });
   window.addEventListener('storage',e => { if (panel === 'scores' && e.key?.startsWith(rankingPrefix)) scores(); });
+  showModelName();
   refreshSound();
   loadArcade();
 })();
