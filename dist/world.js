@@ -2,19 +2,14 @@
 (() => {
   'use strict';
 
-  const CHUNK = 72;
   const FAR = 288;
-  const LANE = 3.65;
-  const ROAD = LANE * 1.5;
   const TAU = Math.PI * 2;
   const {roadX, roadSlope, periodForLap, sceneryForLap, lapAtRoadZ, roadZForLap} = window.BusDrive;
   const LAP_SIGN_OFFSET = 8.2;
-  const SCENERY_GROUND = {
-    hills: {grass:'#afba6d', verge:'#d6bf86'},
-    village: {grass:'#a6b577', verge:'#d4c4ab'},
-    forest: {grass:'#637b55', verge:'#a49370'}
-  };
-  const colorCache = new Map();
+  const {Mesh,rgb,random,lettering} = window.BusMesh;
+  const {CHUNK,LANE,ROAD,biomeFor,routeThemeAt,terrainScale,terrainHeightAt,surfaceColorAt,
+    skylineScaleAt,themesInSection,isRoadsideActorVisible,roadsideScenery,biomeModelMesh,
+    biomeActorsInSection,biomeActorPose} = window.BusRoute;
   const BEND_START = 24;
   const BEND_RATE = .00095;
   const outerBands = Array.from({length:14}, (_,i) => 88 + 24*i);
@@ -27,320 +22,15 @@
     return -BEND_RATE*beyond*beyond;
   }
 
-  function meadowRise(offset, z) {
-    const t = Math.min(1, Math.max(0, (Math.abs(offset)-8.5)/32));
-    if (!t) return 0;
-    const side = Math.sign(offset);
-    const ridge = 4.4 + 1.7*Math.sin(z*.030 + side*1.5)
-      + 1.1*Math.cos(z*.018 + offset*.040) + .8*Math.sin(z*.048 - offset*.024);
-    return t*t*(3-2*t)*ridge;
-  }
-
-  function meadowHeight(x, z) { return meadowRise(x-roadX(z), z); }
-
-  function routeThemeAt(z,lapBiomes) { return sceneryForLap(lapAtRoadZ(z),lapBiomes); }
-
-  // Village streets are level. Lower the neighbouring bank toward the street
-  // in world space, including across the seams of streamed sections.
-  function bankScaleAt(z,lapBiomes) {
-    const lap=lapAtRoadZ(z);
-    if(sceneryForLap(lap,lapBiomes)==='village') return 0;
-    let distance=32;
-    if(lap>1 && sceneryForLap(lap-1,lapBiomes)==='village') distance=Math.min(distance,z-roadZForLap(lap));
-    if(sceneryForLap(lap+1,lapBiomes)==='village') distance=Math.min(distance,roadZForLap(lap+1)-z);
-    const t=Math.max(0,distance/32);
-    return t*t*(3-2*t);
-  }
-  function terrainHeightAt(x,z,lapBiomes) { return bankScaleAt(z,lapBiomes)*meadowHeight(x,z); }
-
-  function isRoadsideActorVisible(type,x,z) {
-    const offset=x-roadX(z);
-    if(offset<0 || offset>16) return true;
-    const lap=lapAtRoadZ(z);
-    const ahead=roadZForLap(lap+1)-z;
-    // Keep a sightline along the right shoulder on the approach and leave
-    // enough space behind the posts for the depth of a building or tree.
-    return ahead>(type==='post' ? 4 : 32) && (lap===1 || z-roadZForLap(lap)>7);
-  }
-
-  function rgb(hex) {
-    if (!colorCache.has(hex)) {
-      const n = parseInt(hex.slice(1), 16);
-      colorCache.set(hex, [(n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]);
-    }
-    return colorCache.get(hex);
-  }
-
-  function random(seed) {
-    let x = (seed * 2654435761 + 12345) | 0;
-    return () => {
-      x = Math.imul(1664525, x) + 1013904223 | 0;
-      return (x >>> 0) / 4294967296;
-    };
-  }
-
-  class Mesh {
-    constructor() { this.data = []; }
-    tri(a, b, c, color, light = 1) {
-      const v = rgb(color);
-      const r = v[0] * light, g = v[1] * light, blue = v[2] * light;
-      this.data.push(...a,r,g,blue,...b,r,g,blue,...c,r,g,blue);
-    }
-    quad(a,b,c,d,color,light=1) {
-      this.tri(a,b,c,color,light);
-      this.tri(a,c,d,color,light);
-    }
-    box(x,y,z,w,h,l,col) {
-      const x0=x-w/2, x1=x+w/2, z0=z-l/2, z1=z+l/2, t=y+h;
-      this.quad([x0,y,z0],[x1,y,z0],[x1,t,z0],[x0,t,z0],col,.94);
-      this.quad([x0,y,z0],[x0,t,z0],[x0,t,z1],[x0,y,z1],col,.86);
-      this.quad([x1,y,z0],[x1,t,z0],[x1,t,z1],[x1,y,z1],col,.73);
-      this.quad([x0,y,z1],[x1,y,z1],[x1,t,z1],[x0,t,z1],col,.82);
-      this.quad([x0,t,z0],[x1,t,z0],[x1,t,z1],[x0,t,z1],col,1);
-    }
-    /* Horizontal rings with explicit per-face lighting keep distant meshes stable. */
-    rings(x,y,z,levels,n,col,angle=0) {
-      const rings = levels.map(([rx,ry,rz,dx=0,dz=0]) =>
-        Array.from({length:n},(_,i) => {
-          const a=i*TAU/n + angle;
-          return [x+dx+rx*Math.cos(a),y+ry,z+dz+rz*Math.sin(a)];
-        }));
-      for (let j=1;j<rings.length;j++) {
-        for (let i=0;i<n;i++) {
-          const k=(i+1)%n, a=(i+.5)*TAU/n+angle;
-          const tone=.89 - .085*Math.cos(a) - .045*Math.sin(a) + .06*j/(rings.length-1);
-          this.quad(rings[j-1][i],rings[j-1][k],rings[j][k],rings[j][i],col,tone);
-        }
-      }
-      const top = rings[rings.length-1];
-      for(let i=1;i<n-1;i++) this.tri(top[0],top[i],top[i+1],col);
-    }
-    ellipse(x,y,z,rx,rz,col,n=14) {
-      const c=[x,y,z];
-      for(let i=0;i<n;i++) {
-        const a=TAU*i/n,b=TAU*(i+1)/n;
-        this.tri(c,[x+rx*Math.cos(a),y,z+rz*Math.sin(a)],[x+rx*Math.cos(b),y,z+rz*Math.sin(b)],col);
-      }
-    }
-    /* A vertically stacked, clipped-corner rectangle for coachwork and trim. */
-    shell(levels,color) {
-      const contour=([w,y,l,r]) => [[-w+r,y,-l],[w-r,y,-l],[w,y,-l+r],[w,y,l-r],[w-r,y,l],[-w+r,y,l],[-w,y,l-r],[-w,y,-l+r]];
-      const shades=[.97,.88,.81,.79,.84,.89,.92,.98];
-      const rs=levels.map(contour);
-      for (let j=1;j<rs.length;j++) for(let i=0;i<8;i++) {
-        const k=(i+1)%8;
-        this.quad(rs[j-1][i],rs[j-1][k],rs[j][k],rs[j][i],color,shades[i]);
-      }
-      const t=rs[rs.length-1];
-      for (let i=1;i<7;i++) this.tri(t[0],t[i],t[i+1],color);
-    }
-  }
-
-  function tree(m,x,z,size,kind,r) {
-    const s=size;
-    m.box(x,0,z,s*.09,s*.55,s*.11,'#866b49');
-    if(kind===0) {
-      const col = r()<.5 ? '#48765a' : '#53795c';
-      m.rings(x,s*.19,z,[[s*.20,0,s*.20],[s*.30,s*.08,s*.29],[s*.05,s*.43,s*.05]],8,col,.28);
-      m.rings(x,s*.37,z,[[s*.21,0,s*.21],[s*.245,s*.035,s*.23],[s*.028,s*.40,s*.028]],7,col);
-      m.rings(x,s*.55,z,[[s*.19,0,s*.18],[0,s*.45,0]],7,col,.28);
-    } else {
-      const col = kind===1 ? '#92aa54' : '#71904c';
-      m.rings(x,s*.34,z,[[s*.12,0,s*.11],[s*.33,s*.12,s*.31],[s*.35,s*.32,s*.32,.02*s],[s*.20,s*.52,s*.21,.04*s],[s*.03,s*.62,s*.04]],8,col,.23);
-    }
-  }
-
-  // Keep the forest lightweight enough to draw several deep rows on each bank.
-  const firNeedles = ['#376750','#477657','#527b61'];
-  const firTiers = [[.17,.64,.21],[.38,.84,.17],[.60,1,.115]];
-  function forestFir(m,x,y,z,height,variant) {
-    m.box(x,y,z,height*.052,height*.32,height*.053,'#715b44');
-    for(const [base,tip,spread] of firTiers) {
-      const angle=variant*.8+base*3, rim=[];
-      for(let i=0;i<7;i++) {
-        const a=angle+i*TAU/7, radius=height*spread*(1+.07*Math.cos(3*a));
-        rim.push([x+radius*Math.cos(a),y+height*(base+.025*(i%2)),z+radius*Math.sin(a)]);
-      }
-      const peak=[x,y+height*tip,z], underside=[x,y+height*(base+.04),z];
-      for(let i=0;i<7;i++) {
-        const next=rim[(i+1)%7], tone=.92-.13*Math.cos(angle+(i+.5)*TAU/7);
-        m.tri(rim[i],next,peak,firNeedles[variant],tone);
-        m.tri(next,rim[i],underside,firNeedles[variant],.67);
-      }
-    }
-  }
-
-  function roadsideScenery(index,theme,lapBiomes) {
-    const r=random(index+2371), start=index*CHUNK, actors=[];
-    function place(type,side,along,gap,size) {
-      const z=start+along, x=roadX(z)+side*(ROAD+gap);
-      const variant=Math.floor(r()*3);
-      if(routeThemeAt(z,lapBiomes)!==theme || !isRoadsideActorVisible(type,x,z)) return;
-      const y=theme==='forest' ? terrainHeightAt(x,z,lapBiomes) : 0;
-      // The shadow map covers elevations up to 24 m, including the bank.
-      const height=type==='pine' ? Math.min(size,23.5-y) : size;
-      actors.push({type,x,y,z,size:height,side,variant});
-    }
-    if(theme==='forest') {
-      for(const side of [-1,1]) for(let row=0;row<4;row++) {
-        for(let i=0;i<8;i++) {
-          const along=(i+.15+.7*r())*CHUNK/8;
-          place('pine',side,along,5+row*8+r()*5,12+r()*7.5);
-        }
-      }
-    } else if(theme==='village') {
-      for(const side of [-1,1]) for(let i=0;i<3;i++) {
-        const lot=((index*3+i)%12+12)%12;
-        const along=i*24+(side<0 ? 8 : 16)+r()*2;
-        let kind='home';
-        if(side===-1 && lot===2) kind='mairie';
-        else if(side===1 && lot===7) kind='ecole';
-        else if((lot+(side===1 ? 2 : 0))%4===0) kind='shop';
-        place(kind,side,along,villagePlans[kind].depth+5.15,1);
-        if(lot%3===1) place('broadleaf',side,along+(side<0 ? 11 : -11),4.3+r(),4+r()*2.5);
-        if(lot%2===0) place('home',side,i*24+3+r()*17,22+r()*8,1);
-      }
-    }
-    return actors;
-  }
-
-  function house(m,x,z,col) {
-    m.box(x,0,z,5.4,3.3,4.3,'#ffe6af');
-    m.tri([x-3.05,3.27,z-2.4],[x+3.05,3.27,z-2.4],[x,5.4,z-2.4],'#fff1cb',.97);
-    m.quad([x-3.05,3.27,z-2.45],[x,5.48,z-2.45],[x,5.48,z+2.45],[x-3.05,3.27,z+2.45],col);
-    m.quad([x,5.48,z-2.45],[x+3.05,3.27,z-2.45],[x+3.05,3.27,z+2.45],[x,5.48,z+2.45],col,.8);
-    m.box(x+.95,3.75,z+1,.55,1.5,.58,'#c08160');
-    m.box(x-.3,0,z-2.18,.83,2.12,.09,'#5a8a80');
-    for (const k of [-1.65,1.5]) {
-      m.box(x+k,.97,z-2.18,.94,1.13,.1,'#fdf2d0');
-      m.box(x+k,1.09,z-2.25,.72,.89,.08,'#47787e');
-    }
-  }
-
-  // The long façade follows the street. Signs on the near gable can be read
-  // from the bus before the roadside entrance comes into view.
-  const villagePlans = {
-    home:  {depth:2.75, width:3.45, eaves:3.45, ridge:5.45},
-    shop:  {depth:3, width:4.25, eaves:4.05, ridge:5.55},
-    mairie:{depth:3.5, width:5.45, eaves:5.15, ridge:7.25},
-    ecole: {depth:3.5, width:6.25, eaves:4.15, ridge:6.35}
-  };
-  function villageBuilding(m,kind,x,y,z,side,variant=0,lowDetail=false) {
-    const {depth,width,eaves,ridge}=villagePlans[kind];
-    const style=variant%3, front=x-side*depth, end=z-width;
-    const walls=kind==='ecole'?'#c68a65':kind==='mairie'?'#f2dba7':
-      ['#f4deb1','#e8b995','#f2ddbf'][style];
-    const tiles=kind==='mairie'?'#647981':kind==='home'&&style===2?'#718187':'#bb6550';
-    const cream='#fff1d2', glass='#527f86';
-    const trim=kind==='shop'?(style===1?'#44877b':'#b95746'):['#60877c','#537d91','#a26d50'][style];
-    const step=front-side*3.05, pathWidth=kind==='home' ? .75 : 2.3;
-    m.quad([front,y,z-pathWidth],[step,y,z-pathWidth],[step,y,z+pathWidth],[front,y,z+pathWidth],'#c8b99f');
-    m.box(x,y,z,depth*2,eaves,width*2,walls);
-    const left=x-depth-.27, right=x+depth+.27, near=end-.24, far=z+width+.24;
-    const roofY=y+eaves, top=y+ridge;
-    for(const gable of [end,z+width]) {
-      m.tri([x-depth,roofY,gable],[x+depth,roofY,gable],[x,top,gable],walls,.94);
-    }
-    m.quad([left,roofY,near],[x,top,near],[x,top,far],[left,roofY,far],tiles);
-    m.quad([x,top,near],[right,roofY,near],[right,roofY,far],[x,top,far],tiles,.82);
-
-    // Isolated Canvas meshes use the same outward-facing trim layers as the bus.
-    function mark(layer,wallSide=0,wallEnd=0) {
-      if(m.layers) m.layers.push({offset:m.data.length,layer,side:wallSide,end:wallEnd});
-    }
-    function facade(u,base,w,h,color,offset=.04) {
-      const face=front-side*offset, u0=z+u-w/2, u1=u0+w, b=y+base;
-      mark(1,-side);
-      m.quad([face,b,u0],[face,b,u1],[face,b+h,u1],[face,b+h,u0],color);
-      mark(0);
-    }
-    function gablePanel(u,base,w,h,color,offset=.04) {
-      const face=end-offset, u0=x+u-w/2, u1=u0+w, b=y+base;
-      mark(1,0,-1);
-      m.quad([u0,b,face],[u1,b,face],[u1,b+h,face],[u0,b+h,face],color);
-      mark(0);
-    }
-    function windowAt(panel,u,base,w,h) {
-      if(!lowDetail) panel(u,base-.10,w+.20,h+.20,cream,.055);
-      panel(u,base,w,h,glass,.08);
-    }
-    function sign(word,base,pixel) {
-      gablePanel(0,base,(word.length*4+1)*pixel,7.5*pixel,trim,.1);
-      if(!lowDetail) {
-        mark(1,0,-1);
-        lettering(m,word,x,y+base+6*pixel,end-.13,pixel,cream);
-        mark(0);
-      }
-    }
-    const door=kind==='mairie'?'#545e65':trim;
-    facade(0,.04,kind==='home'?1.15:1.7,2.3,door);
-
-    if(kind==='home') {
-      for(const u of [-2.05,2.05]) {
-        if(!lowDetail) facade(u,1.22,1.76,1.2,trim);
-        windowAt(facade,u,1.23,.93,1.17);
-      }
-      for(const u of [-1.35,1.35]) windowAt(gablePanel,u,1.18,1,1.25);
-      m.box(x+.86,y+4.4,z+1.7,.56,1.4,.59,'#b58567');
-    } else if(kind==='shop') {
-      const awning=front-side*1.3;
-      for(const u of [-2.42,2.42]) windowAt(facade,u,.53,2.5,1.9);
-      for(let i=0;i<9;i++) {
-        const u=end+.20+i*.90, color=i%2?cream:trim;
-        m.quad([front,y+3.27,u],[front,y+3.27,u+.9],
-          [awning,y+2.78,u+.9],[awning,y+2.78,u],color);
-        m.quad([awning,y+2.78,u],[awning,y+2.78,u+.9],
-          [awning,y+2.55,u+.9],[awning,y+2.55,u],color,.88);
-      }
-      windowAt(gablePanel,0,.63,4.52,1.72);
-      sign(style===1?'CAFÉ':'PAIN',2.7,.21);
-    } else if(kind==='mairie') {
-      // Pale stone portico, slate roof and a French flag above the ridge.
-      const porch=front-side*1.16;
-      m.box(front-side*.48,y,z,1.55,.22,4.05,'#dac9a7');
-      for(const u of [-1.59,1.59]) m.box(porch,y+.20,z+u,.28,2.88,.32,cream);
-      m.box(front-side*.55,y+3.06,z,1.45,.34,3.98,cream);
-      m.tri([porch-side*.11,y+3.39,z-2],[porch-side*.11,y+3.39,z+2],
-        [porch-side*.11,y+4.42,z],'#efcc95');
-      for(const u of [-3.72,3.72]) {
-        windowAt(facade,u,.94,1.4,1.55);
-        windowAt(facade,u,3.24,1.4,1.26);
-      }
-      for(const u of [-1.55,1.55]) windowAt(gablePanel,u,1,1.35,1.75);
-      sign('MAIRIE',3.25,.23);
-      m.box(x-.4,top-.5,z-1.8,.10,2.9,.10,'#8f775b');
-      const flag=['#48689c','#fff4d9','#d76652'];
-      for(let i=0;i<3;i++) {
-        const x0=x-.35+i*.53, x1=x0+.53, z0=z-1.8+.12*i;
-        m.quad([x0,top+2.26,z0],[x1,top+2.22,z0+.12],
-          [x1,top+1.36,z0+.12],[x0,top+1.4,z0],flag[i]);
-      }
-    } else {
-      // A long brick schoolhouse with banks of classroom windows and a clock.
-      for(const u of [-4.63,-2.32,2.32,4.63]) windowAt(facade,u,1.03,1.60,1.65);
-      for(const u of [-1.68,1.68]) windowAt(gablePanel,u,.95,1.58,1.55);
-      sign('ÉCOLE',2.69,.24);
-      const clockY=y+5.35, face=end-.09;
-      mark(1,0,-1);
-      for(let i=0;i<10;i++) {
-        const a=i*TAU/10, b=(i+1)*TAU/10;
-        m.tri([x,clockY,face],[x+.66*Math.cos(a),clockY+.66*Math.sin(a),face],
-          [x+.66*Math.cos(b),clockY+.66*Math.sin(b),face],cream);
-      }
-      gablePanel(0,5.32,.09,.50,'#4b6469',.12);
-      gablePanel(.14,5.30,.36,.09,'#4b6469',.12);
-    }
-  }
-
   function section(index,lapBiomes) {
     const m=new Mesh(), start=index*CHUNK, r=random(index+843);
-    const firstTheme=routeThemeAt(start,lapBiomes), lastTheme=routeThemeAt(start+CHUNK-1e-6,lapBiomes);
-    const themes=firstTheme===lastTheme ? [firstTheme] : [firstTheme,lastTheme];
+    const themes=themesInSection(index,lapBiomes);
     // Cache the slope once per streamed section. One extra row on each end
     // also grounds trees whose branches cross the section seam.
     const rows = Array.from({length:CHUNK/4+3}, (_,i) => {
-      const z=(i-1)*4, worldZ=start+z, scale=bankScaleAt(worldZ,lapBiomes);
-      return {x:roadX(worldZ), heights:meadowBands.map(x => scale*meadowRise(x,worldZ))};
+      const worldZ=start+(i-1)*4, lap=lapAtRoadZ(worldZ);
+      const biome=biomeFor(sceneryForLap(lap,lapBiomes)), scale=terrainScale(worldZ,lap,lapBiomes,biome);
+      return {x:roadX(worldZ), heights:meadowBands.map(offset=>scale*biome.height(offset,worldZ))};
     });
     function strip(z0,z1,l,r,y,col) {
       const a=roadX(start+z0),b=roadX(start+z1);
@@ -348,90 +38,42 @@
     }
     for(let z=0;z<CHUNK;z+=4) {
       const a=rows[z/4+1], b=rows[z/4+2];
-      const theme=routeThemeAt(start+z+2,lapBiomes), ground=SCENERY_GROUND[theme], village=theme==='village';
+      const midZ=start+z+2, biome=biomeFor(routeThemeAt(midZ,lapBiomes));
       for (let i=0;i<meadowBands.length-1;i++) {
         const l=meadowBands[i], u=meadowBands[i+1];
         const al=a.heights[i], ar=a.heights[i+1], bl=b.heights[i], br=b.heights[i+1];
         const light=1-.28*(ar-al)/(u-l)+.14*(bl-al)/4;
         m.quad([a.x+l,al-.06,z],[a.x+u,ar-.06,z],[b.x+u,br-.06,z+4],
-          [b.x+l,bl-.06,z+4],ground.grass,light);
+          [b.x+l,bl-.06,z+4],biome.surface?.((l+u)/2,midZ)||biome.grass,Math.max(.55,Math.min(1.3,light)));
       }
-      const verge=ROAD+(village ? 2.35 : .68);
-      strip(z,z+4,-verge,verge,-.015,ground.verge);
-      strip(z,z+4,-ROAD,ROAD,0,'#595564');
+      const verge=ROAD+biome.shoulder;
+      strip(z,z+4,-verge,verge,-.015,biome.verge);
+      strip(z,z+4,-ROAD,ROAD,0,biome.roadColor);
       for(const side of [-1,1]) {
         const x=side*(ROAD-.18);
         strip(z,z+4,x-.055,x+.055,.013,'#f7db8c');
-        if(village) {
+        if(biome.curb) {
           const curb=side*(ROAD+.20);
           strip(z,z+4,curb-.11,curb+.11,.01,'#e9ddc8');
         }
       }
       if(z%12===0) for(const x of [-LANE/2,LANE/2]) strip(z,z+3.7,x-.08,x+.08,.015,'#ffe7b8');
+      for(const band of biome.roadDetails) strip(z,z+4,band.left,band.right,band.y,band.color);
+      for(const mark of biome.roadPaint?.(start+z)||[]) strip(z,z+mark.length,mark.left,mark.right,mark.y,mark.color);
     }
     const signLap=lapAtRoadZ(start+CHUNK), signZ=roadZForLap(signLap);
     if(signLap>1 && signZ>=start && signZ<start+CHUNK) {
       lapSign(m,signLap,roadX(signZ)+LAP_SIGN_OFFSET,0,signZ-start,lapBiomes);
     }
     for(const theme of themes) {
-      if(theme==='hills') continue;
-      for(const {type,x,y,z,size,side,variant} of roadsideScenery(index,theme,lapBiomes)) {
-        const localZ=z-start;
-        if(type==='pine') forestFir(m,x,y,localZ,size,variant);
-        else if(type==='broadleaf') tree(m,x,localZ,size,1+variant%2,r);
-        else villageBuilding(m,type,x,y,localZ,side,variant);
-      }
+      const definition=biomeFor(theme);
+      if(!definition.roadside) continue;
+      for(const a of roadsideScenery(index,theme,lapBiomes)) definition.drawRoadside(m,a,a.z-start,r);
     }
-    if(!themes.includes('hills')) return m;
-    const inHills=z=>routeThemeAt(start+z,lapBiomes)==='hills';
     const firstProp=m.data.length;
-    for (let i=0;i<32;i++) {
-      const side=i%2 ? 1 : -1;
-      const z=r()*CHUNK, gap=i<10 ? 4.8+r()*5 : 11+r()*38;
-      const x=roadX(start+z)+side*(ROAD+gap);
-      if(!inHills(z) || !isRoadsideActorVisible('tree',x,start+z)) continue;
-      tree(m,x,z,3+r()*6,(r()<.62?0:1+Math.floor(r()*2)),r);
-    }
-    for(let i=0;i<36;i++) {
-      const z=r()*CHUNK, side=r()<.5?1:-1, x=roadX(start+z)+side*(ROAD+.96+r()*27);
-      const size=.3+r()*1.6;
-      if(!inHills(z)) continue;
-      m.ellipse(x,-.026,z,size*1.5,size*.8,i%3===0?'#bdbe76':'#a5b466',6);
-    }
-    for (let i=0;i<31;i++) {
-      const z=r()*CHUNK, side=r()<.5?1:-1, x=roadX(start+z)+side*(ROAD+1.2+r()*4);
-      if(!inHills(z)) continue;
-      if(i%4===0) {
-        m.rings(x,0,z,[[.49,0,.4],[.51,.28,.38],[.23,.48,.24]],6,'#a1afa0',i);
-      } else {
-        const col=i%5===0?'#ffe5a0':'#8b9e53';
-        for(let j=0;j<3;j++) m.tri([x-.12+j*.12,0,z],[x+j*.12,0,z+.06],[x-.08+j*.16,.16+r()*.18,z+.04],col);
-      }
-    }
-    const fenceSide=index%4<2 ? -1:1;
-    for(let i=0;i<6;i++) {
-      const z=6+i*4, x=roadX(start+z)+fenceSide*(ROAD+2.2);
-      if(!inHills(z) || !isRoadsideActorVisible('post',x,start+z)) continue;
-      const nextX=roadX(start+z+4)+fenceSide*(ROAD+2.2);
-      m.box(x,0,z,.19,1.12,.2,'#b88c61');
-      if(i<5) for(const y of [.43,.84]) m.quad([x,y,z],[x,y+.14,z],[nextX,y+.14,z+4],[nextX,y,z+4],'#cfab77');
-    }
-    for (const z of [4,28,52]) for(const side of [-1,1]) {
-      const x=roadX(start+z)+side*(ROAD+.99);
-      if(!inHills(z) || !isRoadsideActorVisible('post',x,start+z)) continue;
-      m.box(x,0,z,.14,.84,.14,'#fff2d7');
-      m.box(x,.56,z-.08,.13,.17,.035,'#da7352');
-    }
-    if((index%3+3)%3===1 && inHills(40)) {
-      house(m,roadX(start+40)-22,40,'#d4825f');
-    } else if ((index%3+3)%3===0 && inHills(42) && isRoadsideActorVisible('stop',roadX(start+42)+8.5,start+42)) {
-      const z=42, x=roadX(start+z)+8.5;
-      m.box(x,0,z,.18,2.75,.16,'#799090');
-      m.box(x,1.86,z,.92,1,.15,'#305e7a');
-      m.box(x,2.08,z-.084,.53,.53,.025,'#fff3ce');
-      m.box(x,2.27,z-.103,.4,.17,.02,'#4a8d9c');
-      m.box(x+.1,0,z+2.6,1.9,.16,.51,'#b77e53');
-      m.box(x+.1,.17,z+2.82,1.9,.43,.11,'#cb9770');
+    for(const theme of themes) {
+      biomeFor(theme).details?.(m,{index,start,length:CHUNK,road:ROAD,roadX,random:r,
+        contains:z=>routeThemeAt(start+z,lapBiomes)===theme,visible:isRoadsideActorVisible});
     }
     // Match the same two grass triangles used above so roots and rocks sit
     // on the hillside, even between grid vertices.
@@ -445,6 +87,11 @@
       m.data[i+1]+=u>=v
         ? (1-u)*a.heights[j]+(u-v)*a.heights[j+1]+v*b.heights[j+1]
         : (1-v)*a.heights[j]+(v-u)*b.heights[j]+u*b.heights[j+1];
+    }
+    m.movingActors=[];
+    for(const actor of biomeActorsInSection(index,lapBiomes)) {
+      if(actor.motion) m.movingActors.push(actor);
+      else m.instance(biomeModelMesh(actor.model,actor.variant),actor.x,actor.y,actor.z-start,actor.yaw,actor.size);
     }
     return m;
   }
@@ -481,47 +128,9 @@
     return m;
   }
 
-  const glyphs = {
-    A:['010','101','111','101','101'], B:['110','101','110','101','110'],
-    C:['111','100','100','100','111'], E:['111','100','110','100','111'],
-    F:['111','100','110','100','100'], G:['111','100','101','101','111'],
-    I:['111','010','010','010','111'],
-    L:['100','100','100','100','111'], M:['101','111','111','101','101'],
-    N:['101','111','111','111','101'], O:['010','101','101','101','010'],
-    P:['110','101','110','100','100'], R:['110','101','110','101','101'],
-    S:['111','100','111','001','111'], T:['111','010','010','010','010'],
-    U:['101','101','101','101','111'], V:['101','101','101','101','010'],
-    '0':['111','101','101','101','111'], '1':['010','110','010','010','111'],
-    '2':['111','001','111','100','111'], '3':['111','001','111','001','111'],
-    '4':['101','101','111','001','001'], '5':['111','100','111','001','111'],
-    '6':['111','100','111','101','111'], '7':['111','001','010','010','010'],
-    '8':['111','101','111','101','111'], '9':['111','101','111','001','111']
-  };
-  function lettering(m,str,cx,cy,z,pixel,col,direction=1) {
-    const width=(str.length*4-1)*pixel;
-    Array.from(str).forEach((ch,c) => {
-      if(ch===' ') return;
-      if(ch==='É') {
-        const l=cx+direction*((c*4+1)*pixel-width/2), r=l+direction*pixel;
-        m.quad([l,cy,z],[r,cy,z],[r+direction*pixel,cy+pixel,z],[r,cy+pixel,z],col);
-      } else if(ch==='Ê') {
-        const l=cx+direction*(c*4*pixel-width/2), step=direction*pixel;
-        const tip=[l+1.5*step,cy+1.45*pixel,z], notch=[l+1.5*step,cy+.8*pixel,z];
-        m.quad([l,cy+.3*pixel,z],[l+.8*step,cy+.3*pixel,z],notch,tip,col);
-        m.quad(tip,notch,[l+2.2*step,cy+.3*pixel,z],[l+3*step,cy+.3*pixel,z],col);
-      }
-      glyphs[ch==='É'||ch==='Ê'?'E':ch].forEach((row,y) => {
-        for(const run of row.matchAll(/1+/g)) {
-          const left=cx+direction*((c*4+run.index)*pixel-width/2);
-          const right=left+direction*run[0].length*pixel;
-          m.quad([left,cy-y*pixel,z],[right,cy-y*pixel,z],[right,cy-(y+1)*pixel,z],[left,cy-(y+1)*pixel,z],col);
-        }
-      });
-    });
-  }
-
   function lapSign(m,lap,x,y,z,lapBiomes) {
-    const townName=window.BusDrive.SCENERY_NAMES[sceneryForLap(lap,lapBiomes)].toUpperCase();
+    const biome=biomeFor(sceneryForLap(lap,lapBiomes)), townName=biome.name.toUpperCase();
+    if(biome.signPlatform) m.box(x-.23,y-.42,z,4.25,.42,3.0,'#a6a5a1');
     const lapLabel='TOUR '+lap, ink='#293c42';
     // French town-entry board with a separate yellow cartouche above it.
     for(const post of [-1.52,1.52]) m.box(x+post,y,z+.07,.13,3.91,.15,'#8a9b99');
@@ -922,7 +531,7 @@
     uniform float cameraHeight;
     vec3 lightPoint(vec3 relative) {
       float height = relative.y + cameraHeight;
-      return vec3(relative.xz - height * lightSlope, (height + 4.0) / 28.0);
+      return vec3(relative.xz - height * lightSlope, (height + 8.0) / 56.0);
     }`;
   const momentPacking = `
     vec4 packMoments(vec2 v) {
@@ -1120,6 +729,7 @@
     let caster,filter,casterUniform,filterUniform,rawMap,blurMap,nearMap,farMap;
     let farSample=null;
     const chunks=new Map();
+    const animatedMeshes=new Map();
     let cachedLapBiomes;
     const modelMatrix=new Float32Array(9);
     function transform(a,roll,pitch,sx=1,sy=1,sz=1) {
@@ -1194,6 +804,7 @@
       gl.enable(gl.DEPTH_TEST);
       gl.disable(gl.CULL_FACE);
       chunks.clear();
+      animatedMeshes.clear();
       farSample=null;
     }
     prepare();
@@ -1271,7 +882,8 @@
         if(fadeSolid) gl.depthFunc(gl.LESS);
       }
       const intro=s.introProgress<1;
-      draw(range,0,-15,d);
+      const skyline=skylineScaleAt(d+185*Math.cos(cam.a),s.lapBiomes);
+      if(skyline>0) draw(range,0,-15,d,0,0,0,1,skyline,1);
       if(intro) {
         // As the camera rises, move the lateral matte below the terrain so it
         // joins the forward skyline without a cut on ultrawide views.
@@ -1285,17 +897,26 @@
       const start=Math.floor((intro ? d-FAR : cam.cz-5)/CHUNK),end=Math.floor((d+FAR)/CHUNK);
       // Include off-screen casters even at moonrise or sunset, when the
       // highest trees on the hillside can project beyond an entire section.
-      const casterHeight=24;
+      const casterHeight=40;
       const slopeZ=sun.z/sun.y, reachZ=casterHeight*Math.abs(slopeZ)+5;
       const firstCaster=start-(slopeZ<0 ? Math.ceil(reachZ/CHUNK) : 1);
       const lastCaster=end+(slopeZ>0 ? Math.ceil(reachZ/CHUNK) : 1);
       for(let idx=firstCaster;idx<=lastCaster;idx++) {
-        if(!chunks.has(idx)) chunks.set(idx,upload(section(idx,s.lapBiomes)));
+        if(!chunks.has(idx)) {
+          const tile=section(idx,s.lapBiomes);
+          chunks.set(idx,{...upload(tile),movingActors:tile.movingActors});
+        }
       }
       for(const [idx,mesh] of chunks) if(idx<firstCaster||idx>lastCaster) {
         gl.deleteBuffer(mesh.buf);chunks.delete(idx);
       }
       const actors=[];
+      for(const [idx,tile] of chunks) for(const actor of tile.movingActors) {
+        const pose=biomeActorPose(actor,t), model=biomeModelMesh(actor.model,actor.variant);
+        if(!animatedMeshes.has(model)) animatedMeshes.set(model,upload(model));
+        actors.push({casts:true,visible:idx>=start&&idx<=end,args:[animatedMeshes.get(model),
+          pose.x,pose.y,pose.z,pose.yaw,pose.roll,pose.pitch,pose.size,pose.size,pose.size]});
+      }
       for(const o of s.objects||[]) {
         if(!items[o.type]||o.z < -8||o.z>FAR) continue;
         const z=d+o.z, x=roadX(z)+o.lane*LANE, a=Math.atan(roadSlope(z));
@@ -1397,7 +1018,7 @@
       gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,nearMap.texture);
       for(let i=start;i<=end;i++) draw(chunks.get(i),0,0,i*CHUNK);
       if(s.boost) draw(trail,x,.12,d+.16*Math.sin(t*16),a);
-      for(const actor of actors) draw(...actor.args);
+      for(const actor of actors) if(actor.visible!==false) draw(...actor.args);
       if(impacts.length) {
         gl.enable(gl.BLEND);
         gl.blendFuncSeparate(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA,gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
@@ -1417,7 +1038,7 @@
       observe?.disconnect();
       canvas.removeEventListener('webglcontextlost',lostHandler);
       canvas.removeEventListener('webglcontextrestored',restoreHandler);
-      for(const model of [coach,range,trail,...Object.values(items),...chunks.values()]) gl.deleteBuffer(model.buf);
+      for(const model of [coach,range,trail,...Object.values(items),...chunks.values(),...animatedMeshes.values()]) gl.deleteBuffer(model.buf);
       for(const target of [rawMap,blurMap,nearMap,farMap]) {
         gl.deleteFramebuffer(target.framebuffer);
         gl.deleteTexture(target.texture);
@@ -1434,6 +1055,8 @@
   function canvasRenderer(canvas, ctx) {
     const cars = new Map();
     const scenerySections = new Map();
+    const terrainSections = new Map();
+    const biomeShadows = new Map();
     let cachedRoute;
     let cachedSignLap;
     const fadeCanvas = canvas.ownerDocument.createElement('canvas');
@@ -1506,32 +1129,82 @@
       if(!cars.has(key)) {
         const mesh=new Mesh();
         mesh.layers=[];
-        villageBuilding(mesh,a.type,0,0,0,a.side,a.variant,lowDetail);
+        a.building(mesh,a.type,0,0,0,a.side,a.variant,lowDetail);
         cars.set(key,faces(mesh));
       }
       return key;
     }
+    function cachedBiomeModel(a) {
+      const key='biome/'+a.model+'/'+a.variant;
+      if(cars.has(key)) return key;
+      const mesh=biomeModelMesh(a.model,a.variant), triangles=faces(mesh);
+      const vertices=[],indices=new Map();
+      for(const f of triangles) f.indices=f.v.map(v=>{
+        const coordinate=v.join(',');
+        if(!indices.has(coordinate)) {
+          indices.set(coordinate,vertices.length);
+          vertices.push(v);
+        }
+        return indices.get(coordinate);
+      });
+      triangles.vertices=vertices;
+      cars.set(key,triangles);
+      // Support points on the actual hull keep shadows of skinny palms, wide
+      // boats and towers distinct without projecting every triangle again.
+      const hull=new Set();
+      for(let i=0;i<8;i++) for(const elevation of [-1,0,1]) {
+        const dx=Math.cos(i*TAU/8),dz=Math.sin(i*TAU/8);
+        let best=-Infinity,vertex;
+        for(const v of vertices) {
+          const score=dx*v[0]+elevation*v[1]+dz*v[2];
+          if(score>best) {best=score;vertex=v;}
+        }
+        if(vertex) hull.add(vertex);
+      }
+      biomeShadows.set(key,[...hull]);
+      return key;
+    }
     function sceneryInSection(index,lapBiomes) {
-      const actors=[], start=index*CHUNK, end=start+CHUNK;
-      const first=routeThemeAt(start,lapBiomes), last=routeThemeAt(end-.001,lapBiomes);
-      for(const theme of first===last?[first]:[first,last]) {
-        if(theme==='hills') {
-          for(let z=start;z<end;z+=8) {
-            if(routeThemeAt(z,lapBiomes)!=='hills') continue;
-            const r=random(z/8+463);
-            for(const side of [-1,1]) {
-              const x=roadX(z)+side*(ROAD+3.8+r()*12), size=3.5+r()*4;
-              const type=r()<.53?'pine':'broadleaf';
-              if(isRoadsideActorVisible(type,x,z)) actors.push({type,x,y:terrainHeightAt(x,z,lapBiomes),z,size});
-            }
-          }
-        } else {
-          for(const a of roadsideScenery(index,theme,lapBiomes)) {
-            actors.push({...a,type:theme==='forest'?'fir':a.type,building:Boolean(villagePlans[a.type])});
-          }
+      const actors=[],start=index*CHUNK;
+      for(const id of themesInSection(index,lapBiomes)) {
+        const biome=biomeFor(id);
+        // Biomes can supply simplified placements, a tiered fir silhouette,
+        // or a reduced-detail building mesh for the software renderer.
+        if(biome.canvasRoadside) actors.push(...biome.canvasRoadside({
+          start,length:CHUNK,road:ROAD,roadX,random,visible:isRoadsideActorVisible,
+          contains:z=>routeThemeAt(z,lapBiomes)===id,heightAt:(x,z)=>terrainHeightAt(x,z,lapBiomes)
+        }));
+        if(biome.roadside) for(const a of roadsideScenery(index,id,lapBiomes)) {
+          const fir=a.type==='pine' && biome.canvasFir;
+          const building=a.type!=='broadleaf' && biome.canvasBuilding;
+          actors.push({...a,type:fir?'fir':a.type,fir,building});
         }
       }
-      return actors;
+      return actors.concat(biomeActorsInSection(index,lapBiomes));
+    }
+    function terrainInSection(index,lapBiomes) {
+      const start=index*CHUNK, strips=[];
+      if(!themesInSection(index,lapBiomes).some(id=>biomeFor(id).surface)) return strips;
+      // World-aligned patches keep shorelines, lakes and dune colours anchored
+      // as the camera moves. Heights use the same grid as the hardware terrain.
+      let previous;
+      for(let z=start;z<=start+CHUNK;z+=4) {
+        const center=roadX(z);
+        const row=meadowBands.map(offset=>[center+offset,terrainHeightAt(center+offset,z,lapBiomes),z]);
+        if(previous && biomeFor(routeThemeAt(z-2,lapBiomes)).surface) {
+          const cells=[];
+          for(let col=0;col<meadowBands.length-1;col++) {
+            const l=meadowBands[col],r=meadowBands[col+1];
+            const slope=(previous[col+1][1]-previous[col][1])/(r-l);
+            const shade=1-.28*slope+.14*(row[col][1]-previous[col][1])/4;
+            const color=surfaceColorAt((l+r)/2,z-2,lapBiomes);
+            cells.push({color,shade:Math.round(12*Math.max(.55,Math.min(1.32,shade)))/12});
+          }
+          strips.push({back:previous,front:row,cells});
+        }
+        previous=row;
+      }
+      return strips;
     }
     function render(s) {
       const w=canvas.clientWidth||640,h=canvas.clientHeight||400;
@@ -1539,6 +1212,7 @@
       const lapBiomes=s.lapBiomes;
       if(cachedRoute!==lapBiomes) {
         scenerySections.clear();
+        terrainSections.clear();
         cars.delete('lapSign');
         cachedSignLap=undefined;
         cachedRoute=lapBiomes;
@@ -1556,9 +1230,17 @@
         prev.end=roadZForLap(lap);
         zones.push({theme,start:prev.end,end:Infinity});
       }
-      const mixed=zones.length>1;
-      const hasVillage=zones.some(zone=>zone.theme==='village');
-      const terrainHeight=hasVillage ? (mixed?(x,z)=>terrainHeightAt(x,z,lapBiomes):()=>0) : meadowHeight;
+      const mixed=zones.length>1, localBiome=biomeFor(zones[0].theme);
+      const terrainHeight=mixed ? (x,z)=>terrainHeightAt(x,z,lapBiomes)
+        : (x,z)=>localBiome.height(x-roadX(z),z);
+      // Light and shadows meet the bridge deck before reaching the water below.
+      function receiverHeight(x,z) {
+        const offset=x-roadX(z);
+        if(Math.abs(offset)<=ROAD) return 0;
+        const height=terrainHeight(x,z);
+        if(height<0 && Math.abs(offset)<ROAD+biomeFor(routeThemeAt(z,lapBiomes)).shoulder) return 0;
+        return height;
+      }
       function point(x,y,z) {
         const dx=x-c.cx,dz=z-c.cz,forward=dx*sn+dz*cs;
         const dy=y-c.cy+groundBend(forward),depth=forward*cp-dy*sp;
@@ -1584,7 +1266,7 @@
           let right=slope*baseDepth;
           let hill=terrainHeight(x0+right*cs,z0-right*sn);
           // Refine the azimuth for a raised bank on a pitched camera.
-          if(hill>0) {
+          if(hill!==0) {
             right=slope*(baseDepth-hill*sp);
             hill=terrainHeight(x0+right*cs,z0-right*sn);
           }
@@ -1671,17 +1353,18 @@
         }
         return light.night*Math.min(1,total*power);
       }
-      for (let layer=0;layer<2;layer++) {
+      const skylineScale=skylineScaleAt(d+185*cs,lapBiomes);
+      for (let layer=0;layer<2 && skylineScale>0;layer++) {
         ctx.fillStyle=litColor(rgb(layer?'#929979':'#ae9aa9'),layer?.18:.33);ctx.beginPath();ctx.moveTo(-6,h);
         for(let x=-6;x<=w+6;x+=6) {
           const k=x/h*4.8+c.a*.8+layer*4;
           const relief=.065+.032*Math.cos(k)+.027*Math.sin(k*2.9)+.019*Math.cos(k*4.2);
-          ctx.lineTo(x,mountainBase+layer*2-h*relief*(layer ? .45 : 1));
+          ctx.lineTo(x,mountainBase+layer*2-h*relief*(layer ? .45 : 1)*skylineScale);
         }
         ctx.lineTo(w+6,h);ctx.fill();
       }
       function grassColor(theme) {
-        const grass=SCENERY_GROUND[theme].grass;
+        const grass=biomeFor(theme).grass;
         const gradient=ctx.createLinearGradient(0,groundLine-h*.04,0,groundLine+h*.30);
         gradient.addColorStop(0,litColor(rgb(theme==='hills'?'#acbc86':grass),.25));
         gradient.addColorStop(1,litColor(rgb(grass)));
@@ -1728,8 +1411,7 @@
       function roadClearance(p) {
         return Math.min((roadCrest-p[3])*focal/roadCrest,crestAt(p[0],ridgeBefore(p[3]))+.4-p[1]);
       }
-      function appendGroundPath(vertices,clearance) {
-        const points=vertices.map(v=>point(v[0],v[1],v[2]));
+      function appendGroundPath(vertices,clearance,target=ctx,points=vertices.map(v=>point(...v))) {
         let visible=points;
         if (!points.every(p=>p[2]>.25)) {
           if (points.every(p=>p[2]<=.25)) return;
@@ -1762,10 +1444,35 @@
           if(clipped.length<3) return;
           visible=clipped;
         }
-        ctx.moveTo(visible[0][0],visible[0][1]);
-        for(let i=1;i<visible.length;i++) ctx.lineTo(visible[i][0],visible[i][1]);
-        ctx.closePath();
+        target.moveTo(visible[0][0],visible[0][1]);
+        for(let i=1;i<visible.length;i++) target.lineTo(visible[i][0],visible[i][1]);
+        target.closePath();
       }
+      function drawTerrainSurfaces() {
+        const first=Math.floor(near/CHUNK),last=Math.floor(far/CHUNK), paints=new Map();
+        for(const index of terrainSections.keys()) if(index<first||index>last) terrainSections.delete(index);
+        for(let index=first;index<=last;index++) {
+          if(!terrainSections.has(index)) terrainSections.set(index,terrainInSection(index,lapBiomes));
+          let oldRow,oldPoints;
+          for(const strip of terrainSections.get(index)) {
+            const back=strip.back===oldRow ? oldPoints : strip.back.map(v=>point(...v));
+            const front=strip.front.map(v=>point(...v));
+            oldRow=strip.front;oldPoints=front;
+            for(let i=0;i<strip.cells.length;i++) {
+              const p=[back[i],back[i+1],front[i+1],front[i]];
+              if(p.every(v=>v[2]<=.25) || p.every(v=>v[2]>.25) &&
+                (p.every(v=>v[0]<0)||p.every(v=>v[0]>w)||p.every(v=>v[1]>h)||p.every(v=>v[1]<0))) continue;
+              const {color,shade}=strip.cells[i], fog=Math.round(10*fogAt(p[0][3]))/10;
+              const key=color+'/'+shade+'/'+fog;
+              if(!paints.has(key)) paints.set(key,{path:new Path2D(),style:litColor(rgb(color).map(v=>v*shade),fog)});
+              const v=[strip.back[i],strip.back[i+1],strip.front[i+1],strip.front[i]];
+              appendGroundPath(v,groundClearance,paints.get(key).path,p);
+            }
+          }
+        }
+        for(const {path,style} of paints.values()) { ctx.fillStyle=style;ctx.fill(path); }
+      }
+      drawTerrainSurfaces();
       function drawHeadlightBeams() {
         // Trace equal-intensity contours of each beam onto the same ground as
         // the shadows. The two pools meet as they open up down the road.
@@ -1778,7 +1485,7 @@
             const f=56*step/32;
             const lateral=side*(.82+.055*f),z=d+(f+2.64)*lampCos-lateral*lampSin;
             const x=busX+(f+2.64)*lampSin+lateral*lampCos;
-            slices.push({x,z,width:.26+.18*f,power:beamPower(f,terrainHeight(x,z))});
+            slices.push({x,z,width:.26+.18*f,power:beamPower(f,receiverHeight(x,z))});
           }
           for(let i=0;i<layers;i++) {
             const level=(i+.5)/layers,left=[],right=[];
@@ -1787,7 +1494,7 @@
               if((previous.power>level)!==(slice.power>level)) {
                 const ratio=(level-previous.power)/(slice.power-previous.power);
                 const x=previous.x+(slice.x-previous.x)*ratio,z=previous.z+(slice.z-previous.z)*ratio;
-                const tip=[x,terrainHeight(x,z),z];
+                const tip=[x,receiverHeight(x,z),z];
                 left.push(tip);right.push(tip);
               }
               previous=slice;
@@ -1795,8 +1502,8 @@
               const half=slice.width*Math.sqrt(1-Math.sqrt(level/slice.power));
               const dx=half*lampCos,dz=-half*lampSin;
               const x=slice.x,z=slice.z;
-              left.push([x-dx,terrainHeight(x-dx,z-dz),z-dz]);
-              right.push([x+dx,terrainHeight(x+dx,z+dz),z+dz]);
+              left.push([x-dx,receiverHeight(x-dx,z-dz),z-dz]);
+              right.push([x+dx,receiverHeight(x+dx,z+dz),z+dz]);
             }
             if(left.length<2) continue;
             ctx.beginPath();appendGroundPath(left.concat(right.reverse()),groundClearance);ctx.fill();
@@ -1837,14 +1544,20 @@
       for(const zone of zones) {
         const start=Math.max(near,zone.start),end=Math.min(far,zone.end);
         if(start>=end) continue;
-        const shoulder=zone.theme==='village'?2.35:.65;
-        ribbon(-ROAD-shoulder,ROAD+shoulder,-.01,SCENERY_GROUND[zone.theme].verge,false,start,end);
-        if(zone.theme==='village') for(const side of [-1,1]) {
+        const biome=biomeFor(zone.theme), verge=ROAD+biome.shoulder;
+        ribbon(-verge,verge,-.01,biome.verge,false,start,end);
+        ribbon(-ROAD,ROAD,0,biome.roadColor,false,start,end);
+        if(biome.curb) for(const side of [-1,1]) {
           const curb=side*(ROAD+.20);
           ribbon(curb-.10,curb+.10,.02,'#e6d8ba',false,start,end);
         }
+        for(const detail of biome.roadDetails) ribbon(detail.left,detail.right,detail.y,detail.color,false,start,end);
+        if(biome.roadPaint) for(let z=Math.floor(start/4)*4;z<end;z+=4) {
+          for(const stripe of biome.roadPaint(z)) {
+            ribbon(stripe.left,stripe.right,stripe.y,stripe.color,false,Math.max(z,start),Math.min(z+stripe.length,end));
+          }
+        }
       }
-      ribbon(-ROAD,ROAD,0,'#595564');
       for(const side of [-1,1]) {
         const x=side*(ROAD-.16);
         ribbon(x-.06,x+.06,.02,'#f7db8c');
@@ -1858,15 +1571,34 @@
         const cameraSide=((c.cx-x)*cy-(c.cz-z)*snYaw)*cr+(c.cy-y)*sr;
         const cameraEnd=(c.cx-x)*snYaw+(c.cz-z)*cy;
         const fog=fogAt((x-c.cx)*sn+(z-c.cz)*cs),palette=new Map();
+        function projectVertex([vx,vy,vz]) {
+          const py=vy*sy*cpitch-vz*sz*spitch,pz=vy*sy*spitch+vz*sz*cpitch;
+          const lx=vx*sx*cr-py*sr;
+          return point(x+lx*cy+pz*snYaw,y+vx*sx*sr+py*cr,z-lx*snYaw+pz*cy);
+        }
+        const projected=source.vertices?.map(projectVertex);
         for(const f of source) {
           if (f.side && f.side*cameraSide<1.1) continue;
           if (f.end && f.end*cameraEnd<2.5) continue;
-          const p=f.v.map(([vx,vy,vz])=>{
-            const py=vy*sy*cpitch-vz*sz*spitch,pz=vy*sy*spitch+vz*sz*cpitch;
-            const lx=vx*sx*cr-py*sr;
-            return point(x+lx*cy+pz*snYaw,y+vx*sx*sr+py*cr,z-lx*snYaw+pz*cy);
-          });
-          if(p.every(v=>v[2]>.2)) {
+          let p=projected ? f.indices.map(i=>projected[i]) : f.v.map(projectVertex);
+          if(projected && p.some(v=>v[2]<=.2)) {
+            if(p.every(v=>v[2]<=.2)) continue;
+            const clipped=[];
+            let prev=p[p.length-1];
+            for(const next of p) {
+              if((prev[2]>.2)!==(next[2]>.2)) {
+                const t=(.2-prev[2])/(next[2]-prev[2]);
+                const a=(1-t)*Math.max(.2,prev[2]), b=t*Math.max(.2,next[2]);
+                clipped.push([w/2+((prev[0]-w/2)*a+(next[0]-w/2)*b)/.2,
+                  h/2+((prev[1]-h/2)*a+(next[1]-h/2)*b)/.2,.2]);
+              }
+              if(next[2]>.2) clipped.push(next);
+              prev=next;
+            }
+            p=clipped;
+          }
+          if(projected || p.every(v=>v[2]>.2)) {
+            if(projected && (p.every(v=>v[0]<0)||p.every(v=>v[0]>w)||p.every(v=>v[1]<0)||p.every(v=>v[1]>h))) continue;
             const layer=f.layer>=2 && c.cy-y<2.94 ? f.layer-4 : f.layer;
             // Layer coplanar glass and trim by their outward offset. Centre
             // depth alone splits a reflection in two on a three-quarter view.
@@ -1903,12 +1635,12 @@
       }
       const actors=[];
       // A tree just outside the streamed view can still shade the foreground.
-      const sunHeight=Math.max(.12,sun.y),casterMargin=(zones.some(z=>z.theme==='forest')?26:16)/sunHeight;
+      const sunHeight=Math.max(.12,sun.y),casterMargin=Math.min(FAR,40/sunHeight);
       const first=Math.floor((near-casterMargin)/CHUNK),last=Math.floor((far+casterMargin)/CHUNK);
       for(const index of scenerySections.keys()) if(index<first||index>last) scenerySections.delete(index);
       for(let index=first;index<=last;index++) {
         if(!scenerySections.has(index)) scenerySections.set(index,sceneryInSection(index,lapBiomes));
-        actors.push(...scenerySections.get(index));
+        for(const a of scenerySections.get(index)) actors.push(a.motion ? biomeActorPose(a,s.time||0) : a);
       }
       for(let lap=Math.max(2,firstLap);lap<=lastLap;lap++) {
         const z=roadZForLap(lap);
@@ -1927,7 +1659,7 @@
         actors.push({type,x,y,z,yaw,roll,pitch,sx,sy,sz,alpha,ground});
       });
       for (const a of actors) {
-        const centerY=a.type==='bus' ? 1.4 : a.y||0;
+        const centerY=a.type==='bus' ? 1.4 : (a.y||0)+(a.height||0)*.5;
         a.forward=(a.x-c.cx)*sn+(a.z-c.cz)*cs;
         a.depth=a.forward*cp-(centerY+groundBend(a.forward))*sp;
       }
@@ -1943,12 +1675,14 @@
       }
       function drawSolid(a) {
         const base=point(a.x,a.y,a.z);
-        const halfWidth=a.building ? focal*9/Math.max(1,base[2]-9)
-          : focal*(a.type==='lapSign'?2.4:1.4)/Math.max(1,base[2]);
-        if(a.building) {
-          if(a.forward < -9 || a.forward>FAR || base[0]<-halfWidth || base[0]>w+halfWidth) return;
-          const top=point(a.x,a.y+10,a.z),row=ridgeBefore(a.forward);
-          if(top[1]>Math.max(crestAt(base[0]-halfWidth,row),crestAt(base[0],row),crestAt(base[0]+halfWidth,row))+1) return;
+        const modular=a.type==='biomeModel',radius=modular?a.radius:a.building?9:a.type==='lapSign'?2.4:1.4;
+        const halfWidth=focal*radius/Math.max(1,base[2]-radius);
+        if(a.building || modular) {
+          const height=a.height||10, depth=base[2]+radius, lateral=(a.x-c.cx)*cs-(a.z-c.cz)*sn;
+          if(a.forward < -radius || a.forward>FAR+radius || (Math.abs(lateral)-radius)*focal>depth*w*.5) return;
+          if(Math.max(2*radius,height)*focal/Math.max(1,depth)<1) return;
+          const top=point(a.x,a.y+height,a.z),row=ridgeBefore(a.forward-radius);
+          if(top[2]>1 && top[1]>Math.max(crestAt(base[0]-halfWidth,row),crestAt(base[0],row),crestAt(base[0]+halfWidth,row))+1) return;
         }
         const clipped=clipToRidge(base,halfWidth);
         const lamp=a.ground?0:headlightAt(a.x,a.y+.65,a.z);
@@ -1959,8 +1693,9 @@
           cars.set('lapSign',faces(mesh));
           cachedSignLap=a.lap;
         }
-        const type=a.building ? buildingModel(a,focal/Math.max(1,base[2])<4) : a.type;
-        model(type,a.x,a.y,a.z,a.yaw||0,a.roll||0,a.pitch,a.sx,a.sy,a.sz,a.alpha,lamp);
+        const type=modular ? cachedBiomeModel(a) : a.building ? buildingModel(a,focal/Math.max(1,base[2])<4) : a.type;
+        const scale=modular?a.size:undefined;
+        model(type,a.x,a.y,a.z,a.yaw||0,a.roll||0,a.pitch,scale??a.sx,scale??a.sy,scale??a.sz,a.alpha,lamp);
         if(a.type==='bus'&&light.night>0) drawLampGlows(a);
         if(clipped) ctx.restore();
       }
@@ -1970,10 +1705,9 @@
       // Find where the light ray meets the meadow, including shadows stretching
       // from an elevated bank across the flat road.
       function land(x,y,z) {
-        if(hasVillage && !mixed) return [x+rayX*y,z+rayZ*y];
-        let fall=Math.max(0,y-terrainHeight(x,z));
+        let fall=Math.max(0,y-receiverHeight(x,z));
         for(let i=0;i<4;i++) {
-          const next=Math.max(0,y-terrainHeight(x+rayX*fall,z+rayZ*fall));
+          const next=Math.max(0,y-receiverHeight(x+rayX*fall,z+rayZ*fall));
           if(Math.abs(next-fall)<.015) break;
           fall=(fall+next)*.5;
         }
@@ -1982,9 +1716,10 @@
       function groundClearance(p) { return crestAt(p[0],ridgeBefore(p[3]))+.4-p[1]; }
       function drawShadow(a,profile) {
         if(a.forward < -casterMargin || a.forward>FAR+casterMargin) return;
-        if(a.type==='fir') {
-          const tip=a.forward+(rayX*sn+rayZ*cs)*(a.y+a.size);
-          if(Math.min(a.forward,tip)>roadCrest+28 || Math.max(a.forward,tip)<-8) return;
+        if(a.type==='fir' || a.type==='biomeModel') {
+          const tip=a.forward+(rayX*sn+rayZ*cs)*(Math.max(0,a.y)+(a.height||a.size));
+          const radius=a.radius||8;
+          if(Math.min(a.forward,tip)>roadCrest+20+radius || Math.max(a.forward,tip)<-radius) return;
         }
         const yaw=a.yaw||0,roll=a.roll||0,pitch=a.pitch||0;
         const cy=Math.cos(yaw),sy=Math.sin(yaw),cr=Math.cos(roll),sr=Math.sin(roll),ct=Math.cos(pitch),st=Math.sin(pitch);
@@ -2008,10 +1743,10 @@
         mx/=outline.length;mz/=outline.length;
         const footprint=scale=>rim.map(([x,z])=>{
           x=mx+(x-mx)*scale;z=mz+(z-mz)*scale;
-          return [x,terrainHeight(x,z),z];
+          return [x,receiverHeight(x,z),z];
         });
         const outer=footprint(1.34),screen=outer.map(v=>point(...v));
-        const center=point(mx,terrainHeight(mx,mz),mz);
+        const center=point(mx,receiverHeight(mx,mz),mz);
         const penumbra=a.building ? .72 : a.size ? a.size*.16 : a.type==='bus' ? .58 : .2;
         const blur=Math.min(h*.055,penumbra*focal/Math.max(2,center[2]));
         if(screen.every(p=>p[2]<=.25) || (screen.every(p=>p[2]>.25) &&
@@ -2019,7 +1754,7 @@
         // Drape nested contours on the terrain. A smooth opacity ramp and
         // extra samples for large shadows keep the foreground feathered.
         const opacity=light.shadow*(a.alpha??1)*(.72-.32*Math.min(1,Math.max(0,a.forward)/FAR));
-        const maxLayers=a.type==='fir'?8:36;
+        const maxLayers=a.type==='fir' || a.type==='biomeModel'?8:36;
         const layers=Math.max(6,Math.min(maxLayers,Math.ceil(2*blur)));
         for(let i=0;i<layers;i++) {
           ctx.globalAlpha=opacity*Math.sin(Math.PI*(i+.5)/layers)/layers;
@@ -2034,8 +1769,9 @@
       ctx.lineTo(w,h);ctx.clip();
       ctx.fillStyle=litColor(rgb('#283849'));
       for(const a of actors) {
-        const profile=shadowProfiles[a.type];
-        if(profile && light.shadow>.005) drawShadow(a,profile);
+        if(light.shadow<=.005) break;
+        const profile=a.type==='biomeModel' ? biomeShadows.get(cachedBiomeModel(a)) : shadowProfiles[a.type];
+        if(profile) drawShadow(a,profile);
       }
       if(light.night>0) drawHeadlightBeams();
       ctx.restore();
@@ -2054,9 +1790,9 @@
           ctx.fillStyle=color;ctx.beginPath();appendGroundPath(vertices);ctx.fill();
         }
         face([vertex(-.026,0),vertex(.026,0),vertex(.026,.32),vertex(-.026,.32)],litColor(rgb('#715b44'),fog,trunkLamp));
-        const needles=litColor(rgb(firNeedles[a.variant]),fog,crownLamp);
+        const needles=litColor(rgb(a.fir.needles[a.variant]),fog,crownLamp);
         const shaded=litColor(rgb('#34594f'),fog,crownLamp);
-        for(const [low,tip,spread] of firTiers) {
+        for(const [low,tip,spread] of a.fir.tiers) {
           const peak=vertex(0,tip), fold=vertex(spread*.20,low);
           face([peak,vertex(-spread,low+.025),fold],needles);
           face([peak,fold,vertex(spread,low+.025)],shaded);

@@ -6,7 +6,9 @@
   function periodForLap(lap=1) {
     return (Math.max(1,Math.floor(lap))-1)%LAP_PERIODS.length;
   }
-  const SCENERY_NAMES = {hills: 'Collines', village: 'Village', forest: 'Forêt'};
+  const SCENERY_NAMES = Object.fromEntries(
+    Array.from(window.BusBiomes.definitions, ([id, biome]) => [id, biome.name])
+  );
   const BIOMES = Object.keys(SCENERY_NAMES);
   const previewBiomes = ['hills'];
   function sceneryForLap(lap = 1, lapBiomes = previewBiomes) {
