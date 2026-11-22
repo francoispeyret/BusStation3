@@ -2,6 +2,10 @@
   'use strict';
 
   const LAP_METRES = 1000;
+  const LAP_PERIODS = ['Matin', 'Journée', 'Fin de journée', 'Nuit'];
+  function periodForLap(lap=1) {
+    return (Math.max(1,Math.floor(lap))-1)%LAP_PERIODS.length;
+  }
   const INTRO_SECONDS = 3.2;
   const LAUNCH_WAIT = 0.65;
   const LAUNCH_SPEED = 48;
@@ -497,7 +501,7 @@
       state.lapProgress = (state.distance % LAP_METRES) / LAP_METRES;
       if (lap > state.lap) {
         state.lap = lap;
-        emit('lap', 'Tour ' + lap, 250);
+        emit('lap', 'Tour ' + lap + ' · ' + LAP_PERIODS[periodForLap(lap)], 250);
       }
 
       const busX = roadX(state.roadZ) + state.laneX * LANE_WIDTH;
@@ -646,5 +650,5 @@
     };
   }
 
-  window.BusDrive = { create, roadX, roadSlope };
+  window.BusDrive = { create, roadX, roadSlope, periodForLap };
 })();
