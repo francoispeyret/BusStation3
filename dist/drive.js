@@ -100,12 +100,7 @@
   function lapAtRoadZ(z) {
     return 1 + Math.floor(routeProgressAt(z));
   }
-  // Geometry and terrain samples repeatedly ask for the same nearby markers.
-  const lapMarkers = new Array(4);
-  function roadZForLap(lap) {
-    const slot = lap % lapMarkers.length;
-    if (lapMarkers[slot]?.lap === lap) return lapMarkers[slot].z;
-    const metres = Math.max(0, lap - 1) * LAP_METRES;
+  function roadZAtDistance(metres) {
     const period = Math.floor(metres / periodLength);
     const within = metres - period * periodLength;
     let lo = 0, hi = sampleCount;
@@ -115,7 +110,14 @@
       else hi = mid;
     }
     const fraction = (within - roadLengths[lo]) / (roadLengths[lo + 1] - roadLengths[lo]);
-    const z = period * roadPeriod + (lo + fraction) * sampleStep;
+    return period * roadPeriod + (lo + fraction) * sampleStep;
+  }
+  // Geometry and terrain samples repeatedly ask for the same nearby markers.
+  const lapMarkers = new Array(4);
+  function roadZForLap(lap) {
+    const slot = lap % lapMarkers.length;
+    if (lapMarkers[slot]?.lap === lap) return lapMarkers[slot].z;
+    const z = roadZAtDistance(Math.max(0, lap - 1) * LAP_METRES);
     lapMarkers[slot] = {lap, z};
     return z;
   }
@@ -455,6 +457,95 @@
     return state;
   }
 
+  function updateTransmission(state) {
+    state.gear = Math.min(6, 1 + Math.floor(state.speed / 21));
+    state.rpm = Math.round(1500 + state.speed * 89 / (1 + (state.gear - 1) * 0.64));
+  }
+
+  const STAGE_SECONDS = 20;
+  const NIGHT_STAGE = 3;
+  const IGNITION_SECONDS = 8, CUTOFF_SECONDS = 13.7, PICKUP_METRES = 300;
+  const BENCHMARK_STAGES = ['hills', 'forest', 'desert', 'city', 'bridge', 'snow'].map((biome, i) => ({
+    biome, label: SCENERY_NAMES[biome] + (i === NIGHT_STAGE ? ' · Fusée de nuit' : ''),
+    startMs: i * STAGE_SECONDS * 1000, endMs: (i + 1) * STAGE_SECONDS * 1000
+  }));
+  const BENCHMARK_SECONDS = STAGE_SECONDS * BENCHMARK_STAGES.length;
+  // Time (s) and speed (km/h) along the city lap. Integrating these speeds gives
+  // 300 m to the pickup, 400 m under thrust, then 300 m back to the next marker.
+  const nightSpeeds = [[0, 180], [4, 120], [IGNITION_SECONDS, 120], [11, ROCKET_SPEED],
+    [CUTOFF_SECONDS, ROCKET_SPEED], [15.95, 120], [STAGE_SECONDS, 180]];
+
+  function createBenchmark(audio) {
+    const state = startingState();
+    state.status = 'running';
+    state.lapBiomes = BENCHMARK_STAGES.map(stage => stage.biome);
+    // Fix the scenery beyond the finish line too: both cameras see ahead of the bus.
+    state.lapBiomes.push('snow', 'snow');
+    const rocketPickupZ = roadZAtDistance(NIGHT_STAGE * LAP_METRES + PICKUP_METRES);
+    const props = [...HAZARDS, 'ramp', 'boost', 'repair'];
+    let playing = false, nextAudio = 0;
+
+    function sample(elapsedMs) {
+      const time = state.time = clamp(elapsedMs / 1000, 0, BENCHMARK_SECONDS);
+      const index = state.benchmarkStage = Math.min(BENCHMARK_STAGES.length - 1, Math.floor(time / STAGE_SECONDS));
+      const local = time - index * STAGE_SECONDS;
+      state.speed = LAP_METRES / STAGE_SECONDS * 3.6;
+      let metres = state.speed * local / 3.6;
+      state.rocketRemaining = state.rocketGrace = 0;
+      if (index === NIGHT_STAGE) {
+        metres = 0;
+        for (let i = 1; i < nightSpeeds.length; i++) {
+          const [start, from] = nightSpeeds[i - 1], [end, to] = nightSpeeds[i];
+          const dt = Math.min(end, local) - start;
+          state.speed = from + (to - from) * dt / (end - start);
+          metres += (from + state.speed) * .5 * dt / 3.6;
+          if (local <= end) break;
+        }
+        if (local >= IGNITION_SECONDS && local < CUTOFF_SECONDS) {
+          state.rocketRemaining = clamp(ROCKET_METRES - (metres - PICKUP_METRES), 0, ROCKET_METRES);
+        }
+        if (local >= CUTOFF_SECONDS) state.rocketGrace = Math.max(0, ROCKET_GRACE_SECONDS - (local - CUTOFF_SECONDS));
+      }
+      state.lap = index + 1;
+      state.lapProgress = metres / LAP_METRES;
+      state.distance = index * LAP_METRES + metres;
+      state.score = Math.floor(state.distance);
+      state.roadZ = roadZAtDistance(state.distance);
+      state.worldHeading = Math.atan(roadSlope(state.roadZ));
+      updateWheelContact(state);
+      updateTransmission(state);
+
+      // Scripted traffic stays on the two outer lanes; the night rocket is in
+      // the centre. Keep the usual draw distance and sample by absolute position.
+      state.objects.length = 0;
+      const first = Math.max(1, Math.ceil((state.roadZ - 20) / 54));
+      for (let wave = first; wave * 54 < state.roadZ + 210; wave++) {
+        state.objects.push({id: wave, type: props[wave % props.length], lane: wave % 2 ? 1 : -1, z: wave * 54 - state.roadZ});
+      }
+      const pickupZ = rocketPickupZ - state.roadZ;
+      if (pickupZ > 0 && pickupZ < 210) state.objects.push({id: -1, type: 'rocket', lane: 0, z: pickupZ});
+      if (playing) {
+        audio.setRocket(state.rocketRemaining > 0);
+        if (time >= nextAudio) {
+          audio.update(state);
+          nextAudio = time + .09;
+        }
+      }
+      return state;
+    }
+    sample(0);
+    return {
+      state, sample,
+      setPlaying(active) {
+        if (playing === active) return;
+        playing = active;
+        audio.setRocket(active && state.rocketRemaining > 0);
+        if (active) audio.update(state);
+        audio.setDriving(active);
+      }
+    };
+  }
+
   function create({ onUpdate = () => {}, onEvent = () => {}, onFinish = () => {} } = {}) {
     const state = startingState();
     const audio = makeSound();
@@ -701,8 +792,7 @@
         const rate = state.speed > target ? deceleration : state.boost ? 36 : 13;
         state.speed += clamp(target - state.speed, -rate * dt, rate * dt);
       }
-      state.gear = Math.min(6, 1 + Math.floor(state.speed / 21));
-      state.rpm = Math.round(1500 + state.speed * 89 / (1 + (state.gear - 1) * 0.64));
+      updateTransmission(state);
 
       // Bicycle steering in world coordinates. Releasing the wheel straightens
       // the front tires; the driver keeps the new heading until countersteering.
@@ -847,6 +937,7 @@
     function beginFrames() {
       previousTime = undefined;
       state.status = 'running';
+      audio.setRocket(state.rocketRemaining > 0);
       if (state.phase !== 'stopping') audio.update(state);
       audio.setDriving(true);
       onUpdate(state);
@@ -855,6 +946,7 @@
 
     return {
       state,
+      createBenchmark: () => createBenchmark(audio),
       start() {
         cancelAnimationFrame(frameId);
         Object.assign(state, startingState());
@@ -928,5 +1020,6 @@
   }
 
   window.BusDrive = { create, roadX, roadSlope, periodForLap, sceneryForLap, SCENERY_NAMES,
-    lapAtRoadZ, roadZForLap, LANE_WIDTH, ROAD_HALF_WIDTH, DRIVABLE_HALF_WIDTH, RAMP, ROCKET_METRES };
+    lapAtRoadZ, roadZForLap, LANE_WIDTH, ROAD_HALF_WIDTH, DRIVABLE_HALF_WIDTH, RAMP, ROCKET_METRES,
+    BENCHMARK_STAGES, BENCHMARK_SECONDS };
 })();

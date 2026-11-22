@@ -31,6 +31,7 @@
   const number = new Intl.NumberFormat('fr-FR');
   const cabinet = $('cabinet'), modal = $('modal'), title = $('modal-title'), body = $('modal-body');
   const road = $('road'), notice = $('notice'), effect = $('active-effect');
+  const raceRoadLabel = road.getAttribute('aria-label');
   const health = $('health');
   const hearts = window.BusHearts.create(health);
   const noticeStatus = $('notice-status');
@@ -52,6 +53,10 @@
   const memoryScores = new Map();
   const models = window.BusModels.models;
   const modelKey = 'busstation3.busModel';
+  const benchmarkClock = $('benchmark-clock'), benchmarkProgress = $('benchmark-progress');
+  const benchmarkStageLabel = $('benchmark-stage');
+  const benchmarkNumber = new Intl.NumberFormat('fr-FR', {maximumFractionDigits: 1});
+  let benchmark, lastBenchmarkReport;
   let modelIndex = 0;
   let renderer, view = 'loading', panel = '', scoreId = '', scoreSaved = false, lastHud = -1;
   const heldControls = new Map();
@@ -285,19 +290,21 @@
     clearNotices();
     lastHud = -1;
   }
-  function start() {
-    if (view === 'loading') return;
-    view = 'run';
-    closeDialog();
-    showRun(true);
+  function rendererReady() {
     if (!renderer && !graphicsLost) {
       try { renderer = window.BusWorld.init(road); } catch { /* Show the rendering error below. */ }
     }
     if (!renderer || graphicsLost) {
-      home();
       openDialog('error','gamepad','Rendu indisponible','<p class="modal-desc">La scène de jeu n’a pas pu démarrer. Recharge la page pour réessayer.</p><button class="secondary" data-action="close">Fermer</button>');
-      return;
+      return false;
     }
+    return true;
+  }
+  function start() {
+    if (view === 'loading' || !rendererReady()) return;
+    view = 'run';
+    closeDialog();
+    showRun(true);
     scoreId = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2,10);
     scoreSaved = false;
     releaseControls();
@@ -316,6 +323,14 @@
     hud({score:0,distance:0,lap:1,speed:0,health:3});
     if (focusPlay) $('play').focus({preventScroll:true});
   }
+  function selectTab(name) {
+    for (const tab of document.querySelectorAll('.navitem')) {
+      const selected = tab.id === name + '-tab';
+      tab.classList.toggle('selected', selected);
+      if (selected) tab.setAttribute('aria-current','page');
+      else tab.removeAttribute('aria-current');
+    }
+  }
   function openDialog(kind, symbol, heading, html, reveal = false) {
     releaseControls();
     cabinet.classList.add('is-paused');
@@ -327,16 +342,7 @@
     body.innerHTML = html;
     $('modal-symbol').innerHTML = icon(symbol);
     $('close-modal').hidden = kind === 'finish';
-    const ranking = kind === 'scores';
-    $('scores-tab').classList.toggle('selected',ranking);
-    $('arcade-tab').classList.toggle('selected',!ranking);
-    if (ranking) {
-      $('scores-tab').setAttribute('aria-current','page');
-      $('arcade-tab').removeAttribute('aria-current');
-    } else {
-      $('scores-tab').removeAttribute('aria-current');
-      $('arcade-tab').setAttribute('aria-current','page');
-    }
+    selectTab(kind === 'scores' ? 'scores' : kind.startsWith('benchmark') ? 'benchmark' : 'arcade');
     if (!modal.open) modal.showModal();
     syncDemo();
     const focus = kind === 'finish' ? title : body.querySelector('[data-initial-focus]') || $('close-modal');
@@ -346,18 +352,21 @@
     cabinet.classList.remove('is-paused');
     panel = '';
     if (modal.open) modal.close();
-    $('scores-tab').classList.remove('selected');
-    $('scores-tab').removeAttribute('aria-current');
-    $('arcade-tab').classList.add('selected');
-    $('arcade-tab').setAttribute('aria-current','page');
+    selectTab(view === 'benchmark' ? 'benchmark' : 'arcade');
     syncDemo();
   }
   function pauseGame() {
+    if (benchmark) { pauseBenchmark(); return; }
     if (view !== 'run') return;
     game.pause();
     openDialog('pause','pause','Pause au terminus',
       '<p class="modal-desc">' + number.format(Math.floor(game.state.distance)) + ' m parcourus · Tour ' + game.state.lap + '</p><div class="modal-buttons"><button class="primary" data-action="resume" data-initial-focus>' + icon('play') + 'Reprendre</button>' +
       (game.state.phase === 'stopping' ? '' : '<button class="secondary" data-action="finish">Terminer la course</button>') + '</div>');
+    if (graphicsLost) {
+      const button = body.querySelector('[data-action="resume"]');
+      button.disabled = true;
+      button.textContent = 'Restauration de l’image…';
+    }
   }
   function resume() {
     if (graphicsLost) return;
@@ -365,6 +374,120 @@
     game.resume();
     cabinet.focus({preventScroll:true});
   }
+
+  function benchmarkPanel() {
+    if (benchmark) { pauseBenchmark(); return; }
+    if (game.state.status === 'running') game.pause();
+    if (lastBenchmarkReport) {
+      openDialog('benchmark','gauge','Résultat du benchmark',$('benchmark-result').innerHTML);
+      const {averageFps, p95FrameMs, frames} = lastBenchmarkReport.summary;
+      setText($('benchmark-average'), benchmarkNumber.format(averageFps));
+      setText($('benchmark-p95'), benchmarkNumber.format(p95FrameMs));
+      setText($('benchmark-frames'), number.format(frames));
+    } else {
+      openDialog('benchmark','gauge','Benchmark',$('benchmark-intro').innerHTML);
+      if (view === 'run') {
+        const note = $('benchmark-intro-note');
+        note.textContent = 'Ta course est en pause. Tu la reprendras après le benchmark.';
+        note.hidden = false;
+      }
+    }
+  }
+  function updateBenchmarkHud(state, elapsedMs) {
+    const stage = window.BusDrive.BENCHMARK_STAGES[state.benchmarkStage];
+    if (benchmark.stage !== stage) {
+      benchmark.stage = stage;
+      benchmark.meter.stage(stage.biome, stage.label);
+      setText(benchmarkStageLabel, stage.label);
+    }
+    const seconds = Math.floor(elapsedMs / 1000);
+    if (seconds !== benchmark.seconds) {
+      benchmark.seconds = seconds;
+      setText(benchmarkClock, Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0'));
+      benchmarkProgress.value = seconds;
+    }
+  }
+  function drawBenchmark(timestamp) {
+    const elapsedMs = benchmark.meter.frame(timestamp);
+    if (elapsedMs >= window.BusBenchmark.durationMs) {
+      lastBenchmarkReport = benchmark.meter.report();
+      leaveBenchmark(true);
+      return;
+    }
+    const state = benchmark.route.sample(elapsedMs);
+    renderer.render(state);
+    updateBenchmarkHud(state, elapsedMs);
+    benchmark.frame = requestAnimationFrame(drawBenchmark);
+  }
+  function startBenchmark() {
+    if (benchmark || !rendererReady()) return;
+    const origin = view;
+    view = 'benchmark';
+    showRun(true);
+    document.body.classList.add('in-benchmark');
+    $('touch-controls').hidden = true;
+    $('benchmark-hud').hidden = false;
+    effect.hidden = true;
+    road.setAttribute('aria-label','Parcours automatique du benchmark');
+    const route = game.createBenchmark();
+    const state = route.state;
+    state.busModel = models[0].id;
+    renderer.render(state);
+    const meter = window.BusBenchmark.create({
+      renderer:renderer.renderer, width:road.width, height:road.height,
+      pixelRatio:window.devicePixelRatio || 1, busModel:state.busModel
+    });
+    benchmark = {origin, route, meter};
+    updateBenchmarkHud(state, 0);
+    resumeBenchmark();
+  }
+  function suspendBenchmark() {
+    cancelAnimationFrame(benchmark.frame);
+    benchmark.meter.pause();
+    benchmark.route.setPlaying(false);
+  }
+  function pauseBenchmark() {
+    suspendBenchmark();
+    const resumeButton = graphicsLost
+      ? '<button class="primary" disabled>Restauration de l’image…</button>'
+      : '<button class="primary" data-action="benchmark-resume" data-initial-focus>Reprendre le benchmark</button>';
+    openDialog('benchmark-pause','pause','Benchmark en pause',
+      '<p class="modal-desc">' + benchmarkClock.textContent + ' / 2:00 · ' + benchmark.stage.label + '</p>' +
+      '<div class="modal-buttons">' + resumeButton + '<button class="secondary" data-action="benchmark-stop">Arrêter le benchmark</button></div>');
+  }
+  function resumeBenchmark() {
+    if (graphicsLost || document.hidden) { pauseBenchmark(); return; }
+    closeDialog();
+    benchmark.route.setPlaying(true);
+    benchmark.frame = requestAnimationFrame(drawBenchmark);
+    cabinet.focus({preventScroll:true});
+  }
+  function returnFromBenchmark() {
+    if (view === 'run') {
+      if (graphicsLost || document.hidden) pauseGame();
+      else resume();
+    } else if (view === 'finish') finish(game.state);
+    else {
+      closeDialog();
+      $('benchmark-tab').focus({preventScroll:true});
+    }
+  }
+  function leaveBenchmark(completed = false) {
+    suspendBenchmark();
+    view = benchmark.origin;
+    benchmark = null;
+    document.body.classList.remove('in-benchmark');
+    $('benchmark-hud').hidden = true;
+    road.setAttribute('aria-label', raceRoadLabel);
+    showRun(view !== 'home');
+    if (view === 'run' && !graphicsLost) {
+      update(game.state);
+      hearts.set(game.state.health, false);
+    } else if (view === 'home' && !graphicsLost) renderer.render(demo);
+    if (completed) benchmarkPanel();
+    else returnFromBenchmark();
+  }
+
   function finish(state) {
     const firstResult = view !== 'finish';
     view = 'finish';
@@ -436,6 +559,7 @@
     scores(persistent ? 'Score enregistré.' : 'Score conservé pour cette session. Le stockage local est indisponible.');
   }
   function scores(feedback='') {
+    if (benchmark) suspendBenchmark();
     if (game.state.status === 'running') game.pause();
     const rows = results().slice(0,10);
     let content = '<p class="modal-desc">Les 10 meilleurs scores de cet appareil.</p>';
@@ -445,24 +569,33 @@
         rows.map(([,r],i) => '<tr><td>' + String(i+1).padStart(2,'0') + '</td><td class="initials">' + r.name + '</td><td>' + number.format(r.distance) + ' m</td><td>' + number.format(r.score) + ' pts</td></tr>').join('') + '</tbody></table></div>';
     } else content += '<div class="empty-board">La première place est libre.<small>Termine une course pour y inscrire tes trois lettres.</small></div>';
     const run = view === 'run';
-    const verb = run ? 'Reprendre' : view === 'finish' ? 'Rejouer' : 'Jouer';
-    openDialog('scores','trophy','Classement local',content + '<div class="modal-buttons"><button class="primary" data-action="' + (run ? 'resume' : 'restart') + '" data-initial-focus>' + icon('play') + verb + '</button></div>');
+    const verb = benchmark ? 'Reprendre le benchmark' : run ? 'Reprendre' : view === 'finish' ? 'Rejouer' : 'Jouer';
+    const action = benchmark ? 'benchmark-resume' : run ? 'resume' : 'restart';
+    openDialog('scores','trophy','Classement local',content + '<div class="modal-buttons"><button class="primary" data-action="' + action + '" data-initial-focus>' + icon('play') + verb + '</button></div>');
   }
   function dismiss() {
-    if (panel === 'pause') resume();
+    if (benchmark) resumeBenchmark();
+    else if (panel === 'benchmark') returnFromBenchmark();
+    else if (panel === 'error' && view === 'run') pauseGame();
+    else if (panel === 'pause') resume();
     else if (panel === 'finish') return;
     else if (panel === 'scores' && view === 'run') pauseGame();
     else if (panel === 'scores' && view === 'finish') finish(game.state);
     else closeDialog();
   }
   function enterArcade() {
-    if (view === 'finish') finish(game.state);
+    if (benchmark) pauseBenchmark();
+    else if (view === 'finish') finish(game.state);
     else if (view === 'run') pauseGame();
     else { closeDialog(); $('play').focus({preventScroll:true}); }
   }
   modal.addEventListener('cancel',e => { e.preventDefault(); dismiss(); });
   modal.addEventListener('click',e => {
     const action = e.target.closest('[data-action]')?.dataset.action;
+    if (action === 'benchmark-start') startBenchmark();
+    if (action === 'benchmark-download') window.BusBenchmark.download(lastBenchmarkReport);
+    if (action === 'benchmark-resume') resumeBenchmark();
+    if (action === 'benchmark-stop') leaveBenchmark();
     if (action === 'resume') resume();
     if (action === 'finish') {
       closeDialog();
@@ -484,6 +617,8 @@
   $('arcade-tab').addEventListener('click',enterArcade);
   $('brand').addEventListener('click',enterArcade);
   $('scores-tab').addEventListener('click',() => scores());
+  $('benchmark-tab').addEventListener('click',benchmarkPanel);
+  $('benchmark-stop').addEventListener('click',() => leaveBenchmark());
   $('sound').addEventListener('click',() => {
     setSoundEnabled(!soundOn);
     saveSound();
@@ -571,7 +706,18 @@
   function handleKey(e) {
     if (e.ctrlKey || e.metaKey || e.altKey || e.target.matches('input,textarea,[contenteditable=true]')) return;
     if (modal.open) {
-      if (panel === 'pause' && ['p','P',' '].includes(e.key) && !e.repeat) { e.preventDefault(); resume(); }
+      if ((panel === 'pause' || panel === 'benchmark-pause') && ['p','P'].includes(e.key) && !e.repeat) {
+        e.preventDefault();
+        if (benchmark) resumeBenchmark();
+        else resume();
+      } else if (panel === 'pause' && e.key === ' ' && !e.repeat) { e.preventDefault(); resume(); }
+      return;
+    }
+    if (benchmark) {
+      if (['p','P','Escape'].includes(e.key) || (e.key === ' ' && e.target === cabinet)) {
+        e.preventDefault();
+        if (!e.repeat) pauseBenchmark();
+      }
       return;
     }
     if (view === 'home') {
@@ -630,28 +776,28 @@
   road.addEventListener('webglcontextlost', () => {
     graphicsLost = true;
     syncDemo();
-    if (game.state.status === 'running') pauseGame();
-    if (panel === 'pause') {
-      const resumeButton = body.querySelector('[data-action="resume"]');
-      resumeButton.disabled = true;
-      resumeButton.textContent = 'Restauration de l’image…';
-    }
+    if (benchmark) { pauseBenchmark(); return; }
+    if (game.state.status === 'running' || panel === 'pause') pauseGame();
   });
   road.addEventListener('webglcontextrestored', () => {
     graphicsLost = false;
     syncDemo();
+    if (benchmark) { pauseBenchmark(); return; }
     if (view === 'run' && game.state.status === 'paused') {
       requestAnimationFrame(() => renderer.render(game.state));
       if (panel === 'pause') pauseGame();
     }
   });
   document.addEventListener('visibilitychange',() => {
+    if (document.hidden && benchmark && !modal.open) pauseBenchmark();
     if (document.hidden && game.state.status === 'running') pauseGame();
     syncDemo();
   });
   reducedMotion.addEventListener('change', syncDemo);
   window.addEventListener('resize', () => { if (reducedMotion.matches) syncDemo(); });
-  window.addEventListener('blur',() => { if (game.state.status === 'running') pauseGame(); });
+  window.addEventListener('blur',() => {
+    if ((benchmark && !modal.open) || game.state.status === 'running') pauseGame();
+  });
   window.addEventListener('storage',e => { if (panel === 'scores' && e.key?.startsWith(rankingPrefix)) scores(); });
   showModelName();
   refreshSound();

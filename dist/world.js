@@ -973,21 +973,28 @@
 
     function render(s) {
       if(lost||gl.isContextLost()) return;
-      if(cachedLapBiomes!==s.lapBiomes) {
+      const routeChanged=cachedLapBiomes!==s.lapBiomes;
+      if(routeChanged) {
         for(const mesh of chunks.values()) gl.deleteBuffer(mesh.buf);
         chunks.clear();
         farSample=null;
         cachedLapBiomes=s.lapBiomes;
       }
       const clock=performance.now(), delta=clock-lastClock;
-      if(delta>1&&delta<1000) frameMs+=.06*(Math.min(delta,125)-frameMs);
       lastClock=clock;
-      if(++count%100===0) {
-        if(frameMs>21) quality=Math.max(.6,quality-.12);
-        else if(frameMs<17) quality=Math.min(1,quality+.06);
+      // Use the same pixel workload on every benchmark pass, including after a slow race.
+      const benchmark=s.benchmarkStage!==undefined;
+      if(!benchmark) {
+        if(delta>1&&delta<1000) frameMs+=.06*(Math.min(delta,125)-frameMs);
+        if(++count%100===0) {
+          if(frameMs>21) quality=Math.max(.6,quality-.12);
+          else if(frameMs<17) quality=Math.min(1,quality+.06);
+        }
       }
-      const cw=cssW||canvas.clientWidth||canvas.width||640, ch=cssH||canvas.clientHeight||canvas.height||400;
-      const scale=Math.min(1.65,window.devicePixelRatio||1,1900/cw,1900/ch)*quality;
+      // A mode switch can resize the canvas before ResizeObserver delivers the new bounds.
+      const cw=(!routeChanged&&cssW)||canvas.clientWidth||canvas.width||640;
+      const ch=(!routeChanged&&cssH)||canvas.clientHeight||canvas.height||400;
+      const scale=Math.min(1.65,window.devicePixelRatio||1,1900/cw,1900/ch)*(benchmark?1:quality);
       const w=Math.max(1,Math.round(cw*scale)),h=Math.max(1,Math.round(ch*scale));
       if(canvas.width!==w||canvas.height!==h) {canvas.width=w;canvas.height=h;}
       gl.viewport(0,0,w,h);

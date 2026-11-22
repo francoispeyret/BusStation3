@@ -8,7 +8,7 @@
   <title>Bus Station 3 · Arcade</title>
   <link rel="icon" href="assets/bus-mark.svg" type="image/svg+xml">
   <link rel="preload" href="assets/col-des-pins.webp" as="image">
-  <link rel="stylesheet" href="style.css?v=16">
+  <link rel="stylesheet" href="style.css?v=17">
   <link rel="stylesheet" href="heart-meter.css">
   <script src="assets/vendor/number-flow-0.6.2.js" defer></script>
   <script src="mesh.js?v=2" defer></script>
@@ -25,11 +25,12 @@
   <script src="biomes/bridge.js?v=2" defer></script>
   <script src="biomes/city.js?v=2" defer></script>
   <script src="biomes/snow.js?v=1" defer></script>
-  <script src="drive.js?v=19" defer></script>
+  <script src="drive.js?v=20" defer></script>
   <script src="biomes/route.js?v=2" defer></script>
-  <script src="world.js?v=18" defer></script>
+  <script src="world.js?v=19" defer></script>
   <script src="heart-meter.js" defer></script>
-  <script src="arcade.js?v=14" defer></script>
+  <script src="benchmark.js?v=1" defer></script>
+  <script src="arcade.js?v=15" defer></script>
 </head>
 <body>
   <section class="loading-screen" id="loading-screen" aria-labelledby="loading-title">
@@ -51,6 +52,7 @@
       <nav aria-label="Navigation principale" class="nav">
         <button id="arcade-tab" class="navitem selected" aria-label="Arcade" aria-current="page"><i data-icon="gamepad"></i><span>Arcade</span></button>
         <button id="scores-tab" class="navitem" aria-label="Classement" aria-haspopup="dialog"><i data-icon="trophy"></i><span>Classement</span></button>
+        <button id="benchmark-tab" class="navitem" aria-haspopup="dialog"><i data-icon="gauge"></i><span>Benchmark</span></button>
       </nav>
       <div class="sound-wrap" id="header-audio">
         <div class="audio-controls" id="audio-controls">
@@ -87,6 +89,15 @@
           <button id="expand" class="glass-icon" aria-label="Plein écran" title="Plein écran"><i data-icon="expand"></i></button>
           <div id="active-effect" class="effect" hidden></div>
         </div>
+        <section id="benchmark-hud" class="benchmark-hud" aria-label="Benchmark en cours" hidden>
+          <div class="benchmark-status">
+            <span class="benchmark-label">Benchmark</span>
+            <span class="benchmark-time"><span id="benchmark-clock">0:00</span> / 2:00</span>
+          </div>
+          <strong id="benchmark-stage" role="status"></strong>
+          <button id="benchmark-stop" type="button" aria-label="Arrêter le benchmark">Arrêter</button>
+          <progress id="benchmark-progress" max="120" value="0" aria-label="Progression du benchmark"></progress>
+        </section>
         <div id="notice" class="notice" aria-hidden="true"></div>
         <div id="notice-status" class="notice-status" role="status" aria-atomic="true"></div>
       </div>
@@ -127,6 +138,27 @@
       </section>
     </div>
   </main>
+  <template id="benchmark-intro">
+    <p class="modal-desc">Le bus traverse les biomes à grande vitesse et déclenche sa fusée de nuit. Le parcours automatique dure deux minutes.</p>
+    <p id="benchmark-intro-note" class="modal-desc" hidden></p>
+    <div class="modal-buttons">
+      <button type="button" class="primary" data-action="benchmark-start" data-initial-focus>Lancer le benchmark</button>
+    </div>
+  </template>
+  <template id="benchmark-result">
+    <dl class="benchmark-summary">
+      <div class="benchmark-score"><dt>Fluidité moyenne</dt><dd><strong id="benchmark-average"></strong> images/s</dd></div>
+      <div><dt>Temps par image (<abbr title="95 % des images ont mis au plus ce temps">P95</abbr>)</dt><dd><span id="benchmark-p95"></span> ms</dd></div>
+      <div><dt>Images mesurées</dt><dd id="benchmark-frames"></dd></div>
+    </dl>
+    <div class="modal-buttons">
+      <button type="button" class="primary" data-action="benchmark-download" title="Télécharger au format JSON" data-initial-focus>Télécharger le résultat</button>
+      <div class="benchmark-result-actions">
+        <button type="button" class="secondary" data-action="benchmark-start">Relancer</button>
+        <button type="button" class="secondary" data-action="close">Retour</button>
+      </div>
+    </div>
+  </template>
   <dialog id="modal" aria-labelledby="modal-title">
     <div class="modal-inner">
       <button id="close-modal" class="close-modal" aria-label="Fermer"><i data-icon="close"></i></button>
