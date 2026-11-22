@@ -1,19 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const vm = require('node:vm');
-
-// Follow the real script order, including the content modules loaded by a file:// game.
-const dist = path.join(__dirname, '../dist');
-const html = fs.readFileSync(path.join(dist, 'index.html'), 'utf8');
-const runtime = vm.createContext({window:{}, Math:Object.create(Math)});
-for (const match of html.matchAll(/<script src="([^"?]+)/g)) {
-  const file = match[1];
-  if (file === 'world.js') break;
-  if (file.startsWith('assets/')) continue;
-  vm.runInContext(fs.readFileSync(path.join(dist, file), 'utf8'), runtime, {filename:file});
-}
+const runtime = require('./game-runtime.cjs')();
 const {BusBiomes, BusDrive, BusRoute} = runtime.window;
 const ids = [...BusBiomes.definitions.keys()];
 

@@ -20,3 +20,11 @@ Moteur (bus-engine.wav)
 « Bus Motor/Engine Sound Loop » de qubodup, publié sous CC0 1.0.
 https://freesound.org/people/qubodup/sounds/54909/
 La notice détaillée figure dans bus-engine.txt.
+
+Tremplin (ramp-boing.wav)
+« BOING! » d’Aeva, créé avec un synthétiseur Arturia MicroFreak et publié
+sur OpenGameArt le 17 juillet 2022.
+https://opengameart.org/content/boing
+CC0 1.0 Universal — https://creativecommons.org/publicdomain/zero/1.0/
+L’adaptation pour le jeu accélère le ressort, raccourcit sa résonance et
+ajuste son volume. L’extrait est en mono à 24 kHz avec des fondus.

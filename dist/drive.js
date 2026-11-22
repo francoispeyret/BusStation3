@@ -34,6 +34,11 @@
   const TIRE_WIDTH = 0.29;
   const WHEELBASE = 3.09;
   const MAX_HEADING_FROM_ROAD = 0.54;
+  const RAMP = {halfWidth: 1.45, halfLength: 2.6, lipHeight: 0.9, wheelMargin: 0.35};
+  const RAMP_CLEARANCE = 12;
+  const LONG_JUMP_SPEED = 72;
+  const RAMP_KICK_KMH = 12;
+  const RAMP_KICK_SECONDS = 0.35;
   // Half-extents in metres, matching the visible road objects.
   const FOOTPRINTS = {
     cone: [0.46, 0.44], barrier: [1.12, 0.35], oil: [1.12, 0.97],
@@ -59,8 +64,8 @@
     for (const wheel of state.rearWheels) {
       wheel.x = busX + wheel.side * BUS_HALF_WIDTH * cos + REAR_AXLE_Z * sin;
       wheel.z = state.roadZ - wheel.side * BUS_HALF_WIDTH * sin + REAR_AXLE_Z * cos;
-      wheel.contact = tireContact(wheel.x, wheel.z);
-      contact += wheel.contact + tireContact(wheel.x + WHEELBASE * sin, wheel.z + WHEELBASE * cos);
+      wheel.contact = state.jump ? 0 : tireContact(wheel.x, wheel.z);
+      if (!state.jump) contact += wheel.contact + tireContact(wheel.x + WHEELBASE * sin, wheel.z + WHEELBASE * cos);
     }
     state.shoulderContact = contact / 4;
   }
@@ -114,6 +119,7 @@
     const engineUrl = 'assets/bus-engine.wav';
     const horn = {url: 'assets/departure-horn.wav'};
     const airBrake = {url: 'assets/air-brake.wav'};
+    const rampBoing = {url: 'assets/ramp-boing.wav'};
     const engineLevel = 0.25;
     const fullScaleGain = 0.45;
     let masterGain = fullScaleGain * 0.6;
@@ -146,10 +152,11 @@
         });
     }
 
-    // Fetch the two small cues on the launch screen so the first tap can sound immediately.
+    // Fetch short cues on the launch screen to avoid network waits during play.
     if ((window.AudioContext || window.webkitAudioContext) && window.location?.protocol !== 'file:') {
       cueBytes(horn);
       cueBytes(airBrake);
+      cueBytes(rampBoing);
     }
 
     function stopCue() {
@@ -356,7 +363,12 @@
         applyEngineTone();
       },
       effect(type) {
-        if (type === 'boost' || type === 'repair' || type === 'lap') {
+        if (type === 'jump') {
+          playCue(rampBoing);
+        } else if (type === 'spin') {
+          note(659, 988, 0.15, 0, 0.095);
+          note(988, 1319, 0.19, 0.095, 0.085);
+        } else if (type === 'boost' || type === 'repair' || type === 'lap') {
           const notes = type === 'boost' ? [392, 494, 659] : type === 'repair' ? [523, 659, 784] : [523, 659, 784, 1047];
           notes.forEach((pitch, i) => note(pitch, pitch, 0.22, i * 0.075, 0.105));
         } else if (type === 'oil') {
@@ -374,7 +386,7 @@
       distance: 0, roadZ: 0, speed: LAUNCH_SPEED, time: 0, laneX: 0,
       worldHeading: Math.atan(roadSlope(0)), heading: 0, steer: 0,
       shoulderContact: 0, rearWheels: [-1, 1].map(side => ({side, x: 0, z: 0, contact: 0})),
-      objects: [], impacts: [], boost: 0, slip: 0, flat: false, hit: 0, score: 0, lap: 1,
+      objects: [], impacts: [], jump: null, boost: 0, slip: 0, flat: false, hit: 0, score: 0, lap: 1,
       lapBiomes: ['hills'], lapProgress: 0, health: 3, gear: 3, rpm: 2200, braking: false
     };
     updateWheelContact(state);
@@ -388,6 +400,7 @@
     let previousTime;
     let wave = 0;
     let nextWave = 0;
+    let nextRamp = 0;
     let objectId = 0;
     let bonus = 0;
     let nextAudio = 0;
@@ -399,6 +412,7 @@
 
     function emit(type, message, points = 0) {
       bonus += points;
+      state.score = Math.floor(state.distance) + bonus;
       if (type !== 'dodge') audio.effect(type);
       onEvent({ type, message, points }, state);
     }
@@ -429,9 +443,43 @@
           if (wave % 4 === 2) addObject(safe, z, 'repair');
           else if (wave % 3 === 0) addObject(safe, z, 'boost');
         }
+        const waveZ = nextWave;
         nextWave += Math.max(38, 59 - nextWave / 360) + Math.random() * 12;
+        // Ramps have their own distance schedule. Move a candidate clear of
+        // either neighbouring wave and let it sit anywhere across the lanes.
+        if (nextRamp <= nextWave - RAMP_CLEARANCE) {
+          const rampZ = Math.max(nextRamp, waveZ + RAMP_CLEARANCE);
+          addObject(Math.random() * 2 - 1, rampZ - state.roadZ, 'ramp');
+          nextRamp = rampZ + 115 + Math.random() * 60;
+        }
         wave++;
       }
+    }
+
+    function takeOff() {
+      const entrySpeed = state.speed;
+      const momentum = clamp((entrySpeed - 30) / 115, 0, 1);
+      state.jump = {
+        entrySpeed, long: entrySpeed >= LONG_JUMP_SPEED, progress: 0, rate: 1 / (0.60 + 0.68 * momentum),
+        peak: 1.75 + 2.9 * momentum, height: RAMP.lipHeight * 0.5,
+        spinDirection: 0, spinElapsed: 0, spinAngle: 0
+      };
+      state.speed += RAMP_KICK_KMH;
+      updateWheelContact(state);
+      emit('jump', state.jump.long ? 'Grand saut !' : 'Saut de tremplin !', 100);
+    }
+
+    function advanceJump(dt) {
+      const jump = state.jump;
+      if (!jump) return;
+      const p = jump.progress = Math.min(1, jump.progress + dt * jump.rate);
+      jump.height = (RAMP.lipHeight * 0.5 + 4 * jump.peak * p) * (1 - p);
+      if (jump.spinDirection) {
+        jump.spinElapsed += dt;
+        const t = Math.min(1, jump.spinElapsed / jump.spinDuration);
+        jump.spinAngle = jump.spinDirection * 2 * Math.PI * t * t * (3 - 2 * t);
+      }
+      if (p === 1) state.jump = null;
     }
 
     function encounter(type) {
@@ -535,6 +583,7 @@
       const previous = state.stopProgress;
       phaseTime += dt;
       advanceClock(dt);
+      advanceJump(dt);
       state.introProgress = Math.min(1, state.introProgress + dt / INTRO_SECONDS);
       const progress = state.stopProgress = Math.min(1, phaseTime / BRAKE_SECONDS);
       if (previous < 1) {
@@ -555,12 +604,16 @@
       state.boost = Math.max(0, state.boost - dt);
       state.slip = Math.max(0, state.slip - dt);
 
-      const cruise = Math.min(114, 78 + state.distance * 0.012);
-      let target = (state.flat ? cruise * 0.70 : cruise) + (state.boost ? 39 : 0);
-      if (state.braking) target = Math.min(34, target);
-      target *= 1 - state.shoulderContact * (1 - SHOULDER_SPEED_FACTOR);
-      const rate = state.speed > target ? 62 : state.boost ? 36 : 13;
-      state.speed += clamp(target - state.speed, -rate * dt, rate * dt);
+      if (state.jump) {
+        state.speed = Math.max(state.jump.entrySpeed, state.speed - RAMP_KICK_KMH * dt / RAMP_KICK_SECONDS);
+      } else {
+        const cruise = Math.min(114, 78 + state.distance * 0.012);
+        let target = (state.flat ? cruise * 0.70 : cruise) + (state.boost ? 39 : 0);
+        if (state.braking) target = Math.min(34, target);
+        target *= 1 - state.shoulderContact * (1 - SHOULDER_SPEED_FACTOR);
+        const rate = state.speed > target ? 62 : state.boost ? 36 : 13;
+        state.speed += clamp(target - state.speed, -rate * dt, rate * dt);
+      }
       state.gear = Math.min(6, 1 + Math.floor(state.speed / 21));
       state.rpm = Math.round(1500 + state.speed * 89 / (1 + (state.gear - 1) * 0.64));
 
@@ -589,6 +642,7 @@
         state.worldHeading += (newRoadAngle - state.worldHeading) * (1 - Math.exp(-7 * dt));
       }
       state.heading = state.worldHeading - newRoadAngle;
+      advanceJump(dt);
       updateWheelContact(state);
       const progress = routeProgressAt(state.roadZ);
       const lap = 1 + Math.floor(progress);
@@ -613,6 +667,14 @@
         const cosRoad = Math.cos(objectAngle), sinRoad = Math.sin(objectAngle);
         const dx = offsetX * cosRoad - object.z * sinRoad;
         const dz = offsetX * sinRoad + object.z * cosRoad;
+        if (object.type === 'ramp') {
+          // The front wheels reach the lip as the bus centre crosses the ramp centre.
+          if (dz <= 0) {
+            object.passed = true;
+            if (!state.jump && dz >= -RAMP.halfLength && Math.abs(dx) <= RAMP.halfWidth + RAMP.wheelMargin) takeOff();
+          }
+          continue;
+        }
         const relativeHeading = state.worldHeading - objectAngle;
         const sin = Math.sin(relativeHeading), cos = Math.cos(relativeHeading), absSin = Math.abs(sin);
         const [width, length] = FOOTPRINTS[object.type];
@@ -620,7 +682,7 @@
           && Math.abs(dz) <= length + BUS_HALF_WIDTH * absSin + BUS_HALF_LENGTH * cos
           && Math.abs(dx * cos - dz * sin) <= BUS_HALF_WIDTH + width * cos + length * absSin
           && Math.abs(dx * sin + dz * cos) <= BUS_HALF_LENGTH + width * absSin + length * cos;
-        if (touched) {
+        if (touched && !state.jump) {
           object.passed = true;
           object.collected = object.type !== 'pothole';
           const duration = IMPACT_DURATIONS[object.type];
@@ -708,6 +770,7 @@
           updateWheelContact(state);
         }
         nextWave = 55;
+        nextRamp = 77 + Math.random() * 22;
         fillRoad();
         beginFrames();
         audio.horn();
@@ -729,7 +792,19 @@
         if (state.status === 'paused') beginFrames();
       },
       steer(value) {
-        steeringInput = state.status === 'running' && state.phase !== 'stopping' && Number.isFinite(value) ? clamp(value, -1, 1) : 0;
+        const input = state.status === 'running' && state.phase !== 'stopping' && Number.isFinite(value) ? clamp(value, -1, 1) : 0;
+        const previousDirection = Math.abs(steeringInput) >= 0.12 ? Math.sign(steeringInput) : 0;
+        steeringInput = input;
+        const direction = Math.abs(input) >= 0.12 ? Math.sign(input) : 0;
+        const jump = state.jump;
+        if (jump?.long && !jump.spinDirection && direction && direction !== previousDirection) {
+          jump.spinDirection = direction;
+          // Speed up late spins and allow a brief finish just before touchdown.
+          const timeLeft = (1 - jump.progress) / jump.rate;
+          jump.spinDuration = clamp(timeLeft, 0.28, 0.50);
+          jump.rate = Math.min(jump.rate, (1 - jump.progress) / jump.spinDuration);
+          emit('spin', '360° !', 50);
+        }
       },
       brake(pressed) {
         if (state.phase !== 'stopping') state.braking = state.status === 'running' && Boolean(pressed);
@@ -739,6 +814,7 @@
       stop() {
         cancelAnimationFrame(frameId);
         state.status = 'stopped';
+        state.jump = null;
         steeringInput = 0;
         state.braking = false;
         audio.setDriving(false);
@@ -747,5 +823,5 @@
   }
 
   window.BusDrive = { create, roadX, roadSlope, periodForLap, sceneryForLap, SCENERY_NAMES,
-    lapAtRoadZ, roadZForLap, LANE_WIDTH, ROAD_HALF_WIDTH, DRIVABLE_HALF_WIDTH };
+    lapAtRoadZ, roadZForLap, LANE_WIDTH, ROAD_HALF_WIDTH, DRIVABLE_HALF_WIDTH, RAMP };
 })();

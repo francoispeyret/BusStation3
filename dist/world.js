@@ -4,7 +4,7 @@
 
   const FAR = 288;
   const TAU = Math.PI * 2;
-  const {roadX, roadSlope, periodForLap, sceneryForLap, lapAtRoadZ, roadZForLap, DRIVABLE_HALF_WIDTH} = window.BusDrive;
+  const {roadX, roadSlope, periodForLap, sceneryForLap, lapAtRoadZ, roadZForLap, DRIVABLE_HALF_WIDTH, RAMP} = window.BusDrive;
   const LAP_SIGN_OFFSET = DRIVABLE_HALF_WIDTH + 2.85;
   const {Mesh,rgb,random,lettering} = window.BusMesh;
   const fleet = window.BusModels;
@@ -183,6 +183,7 @@
   }
 
   const IMPACT_MESHES = ['waterRipple','waterDrop','repairHalo','repairSpark','boostHalo'];
+  const PROP_TYPES = ['cone','barrier','oil','pothole','repair','boost','ramp','jumpShade',...IMPACT_MESHES];
 
   function prop(type) {
     const m=new Mesh();
@@ -204,6 +205,27 @@
         m.box(x,1.12,0,.23,.16,.23,'#ec9c3d');
         m.box(x,1.28,0,.12,.06,.12,'#ffdc7b');
       }
+    } else if(type==='ramp') {
+      const {halfWidth:w,halfLength:l,lipHeight:h}=RAMP;
+      const deck=(x,z,offset=0)=>[x,.035+(h-.035)*(z+l)/(2*l)+offset,z];
+      for(const side of [-1,1]) {
+        const x=side*w;
+        m.quad([x,0,-l],deck(x,-l),deck(x,l),[x,0,l],'#db6a47',side<0?.92:.78);
+      }
+      m.quad([-w,0,l],[w,0,l],deck(w,l),deck(-w,l),'#a5453b');
+      m.quad(deck(-w,-l),deck(w,-l),deck(w,l),deck(-w,l),'#21686d');
+      // Paint atop the inclined deck. Keep the chevrons readable under moonlight.
+      m.layers=[{offset:m.data.length,layer:1,side:0,end:0}];
+      const paintStart=m.data.length;
+      for(const side of [-1,1]) {
+        const edge=side*w, inner=side*(w-.14);
+        m.quad(deck(edge,-l,.012),deck(inner,-l,.012),deck(inner,l,.012),deck(edge,l,.012),'#7ef3cb');
+      }
+      for(const z of [-2.18,-.67,.84]) for(const side of [-1,1]) {
+        const x=side*(w-.32);
+        m.quad(deck(x,z,.018),deck(0,z+.63,.018),deck(0,z+1.08,.018),deck(x,z+.45,.018),'#ffdc76');
+      }
+      for(let i=paintStart+3;i<m.data.length;i+=6) m.data[i]+=6;
     } else if(type==='oil') {
       m.ellipse(0,.025,0,1.29,1.2,'#699eaf',13);
       m.ellipse(.06,.031,-.06,1.14,1.01,'#548d9e',12);
@@ -223,6 +245,8 @@
         m.box(0,.63,s*.317,.18,.51,.035,'#fff9dc');
       }
       m.box(0,.51,0,1.14,.085,.64,'#73c5a1');
+    } else if(type==='jumpShade') {
+      m.ellipse(0,0,0,1,1,'#1e2735',20);
     } else if(type==='waterRipple'||type==='repairHalo'||type==='boostHalo') {
       const col=type==='waterRipple'?'#c1ece9':type==='repairHalo'?'#8fffd0':'#ffd879';
       const inner=type==='waterRipple'?.95:.89;
@@ -343,7 +367,7 @@
         for(let i=0;i<wheels.length;i++) {
           const wheel=wheels[i], from=previous[i];
           const contact=from.contact+(wheel.contact-from.contact)*fraction;
-          if(contact<=0 || jitter()>=Math.min(1,speed/22)*contact) continue;
+          if(s.jump || contact<=0 || jitter()>=Math.min(1,speed/22)*contact) continue;
           const x=from.x+(wheel.x-from.x)*fraction, z=from.z+(wheel.z-from.z)*fraction;
           const color=shoulderColorAt(x-roadX(z),z,s.lapBiomes);
           const burst=1+Math.floor(jitter()**2*4);
@@ -402,8 +426,9 @@
         cz:distance - radius * Math.cos(bearing), a:bearing - pan, f:focal, pitch, aspect};
     }
     const framing = Math.max(1, .70 / aspect);
-    const back = 13.3 * framing;
-    const height = 12.9 * framing;
+    const airborne = Math.max(0,(state.jump?.height||0)-RAMP.lipHeight*.5);
+    const back = 13.3 * framing + airborne*.24;
+    const height = 12.9 * framing + airborne*.27;
     // A low ridge 115 m ahead represents the skyline of the curved course.
     // Sight it from the actual camera height, including in portrait.
     const chasePitch = RIDGE_PITCH + Math.atan2(height-2,115);
@@ -442,6 +467,47 @@
   function brakingPitch(state) {
     if (!(state.stopProgress > 0 && state.stopProgress < 1)) return 0;
     return .032*Math.sin(state.stopProgress*Math.PI*1.28)*(1-state.stopProgress);
+  }
+
+  function coachPose(s,d) {
+    const x=roadX(d)+(s.laneX||0)*LANE, angle=Math.atan(roadSlope(d))+(s.heading||0);
+    const speed=Math.min(1,(s.speed||0)/70), t=s.time||0;
+    let y=.035+Math.sin(d*1.05)*speed*.018+(s.flat?0:Math.cos(d*.73)*.008);
+    let yaw=angle, pitch=brakingPitch(s);
+    let roll=(s.steer||0)*.072+(s.flat?.044+Math.sin(d*1.6)*.013:0)+(s.hit?Math.sin(t*26)*.035*speed:0);
+    const slope=RAMP.lipHeight/(2*RAMP.halfLength);
+    if(s.jump) {
+      const {height,progress,spinAngle}=s.jump;
+      y+=height;
+      yaw+=spinAngle;
+      pitch-=Math.atan(slope)*(1-progress)+.21*Math.sin(TAU*progress);
+      roll+=.08*Math.sin(spinAngle);
+    } else {
+      // Let each axle climb the deck before the impulse at the centre of the ramp.
+      const axle=1.55;
+      for(const o of s.objects||[]) {
+        if(o.type!=='ramp' || o.passed || Math.abs(o.z)>RAMP.halfLength+axle+1) continue;
+        const z=d+o.z, roadAngle=Math.atan(roadSlope(z)), cos=Math.cos(roadAngle), sin=Math.sin(roadAngle);
+        const dx=x-roadX(z)-o.lane*LANE, along=dx*sin-o.z*cos;
+        if(along>0 || Math.abs(dx*cos+o.z*sin)>RAMP.halfWidth+RAMP.wheelMargin) continue;
+        const front=Math.max(0,along+axle+RAMP.halfLength)*slope;
+        const rear=Math.max(0,along-axle+RAMP.halfLength)*slope;
+        y+=(front+rear)*.5;
+        pitch-=Math.atan((front-rear)/(2*axle));
+        break;
+      }
+    }
+    return {x,y,yaw,roll,pitch};
+  }
+
+  // At sunrise the cast shadow can leave the screen. A soft spot beneath the
+  // airborne coach keeps its position on the road readable until touchdown.
+  function landingShadow(s,bus,emit) {
+    if(!s.jump) return;
+    const h=s.jump.height, spread=1+.045*h, opacity=Math.min(1,h)*.16/(1+.11*h);
+    for(const scale of [1.25,1,.75,.5]) {
+      emit(bus.width*.60*spread*scale,bus.length*.49*spread*scale,opacity);
+    }
   }
 
   // Start and end angles are in degrees. The fourth lap is lit by the moon.
@@ -778,7 +844,7 @@
       trail=upload(streak);
       sprayBuffer=gl.createBuffer();
       items={};
-      for(const type of ['cone','barrier','oil','pothole','repair','boost',...IMPACT_MESHES]) items[type]=upload(prop(type));
+      for(const type of PROP_TYPES) items[type]=upload(prop(type));
       gl.enable(gl.DEPTH_TEST);
       gl.disable(gl.CULL_FACE);
       chunks.clear();
@@ -820,7 +886,7 @@
       gl.useProgram(sky);
       const bus=fleetById.get(s.busModel)||fleet.models[0], busOpacity=s.busOpacity??1;
       if(!coaches.has(bus)) coaches.set(bus,upload(fleet.mesh(bus.id)));
-      const d=s.roadZ ?? s.distance ?? 0, t=s.time||0, lane=s.laneX||0, cam=camera(s,w/h,bus);
+      const d=s.roadZ ?? s.distance ?? 0, t=s.time||0, cam=camera(s,w/h,bus);
       const light=lapLighting(s), sun=light.direction;
       const solar=light.night<1 && projectDisc(light.sun,cam);
       const lunar=light.night>0 && projectDisc(light.moon,cam);
@@ -904,13 +970,12 @@
         actors.push({casts:o.type!=='oil'&&o.type!=='pothole',
           args:[items[o.type],x,pickup?Math.sin(t*3+z*.06)*.12:0,z,a+(pickup?.29*Math.sin(t*2.5+z*.17):0)]});
       }
-      const x=roadX(d)+lane*LANE;
-      const a=Math.atan(roadSlope(d))+(s.heading||0);
-      const speed=Math.min(1,(s.speed||0)/70);
-      const roll=(s.steer||0)*.072+(s.flat?.044+Math.sin(d*1.6)*.013:0)+(s.hit ? Math.sin(t*26)*.035*speed:0);
-      const busY=.035+Math.sin(d*1.05)*speed*.018+(s.flat?0:Math.cos(d*.73)*.008),pitch=brakingPitch(s);
+      const {x,y:busY,yaw:a,roll,pitch}=coachPose(s,d);
       const impacts=[];
       const coachArgs=[coaches.get(bus),x,busY,d,a,roll,pitch,1,1,1];
+      landingShadow(s,bus,(sx,sz,alpha)=>{
+        impacts.push({alpha,args:[items.jumpShade,x,.044,d,a,0,0,sx,1,sz]});
+      });
       if(busOpacity>=1) actors.push({casts:true,args:coachArgs});
       else if(busOpacity>0) impacts.push({solid:true,alpha:busOpacity,args:coachArgs});
       impactParts(s,(type,x,y,z,yaw,roll,pitch,sx,sy,sz,alpha)=>{
@@ -1003,7 +1068,8 @@
       for(let i=start;i<=end;i++) draw(chunks.get(i),0,0,i*CHUNK);
       if(s.boost) {
         const behind=bus.taillamp[2]+.36+.16*Math.sin(t*16);
-        draw(trail,x+behind*Math.sin(a),.12,d+behind*Math.cos(a),a);
+        const z=behind*Math.cos(pitch);
+        draw(trail,x+z*Math.sin(a),busY+.085-behind*Math.sin(pitch),d+z*Math.cos(a),a,roll,pitch);
       }
       for(const actor of actors) if(actor.visible!==false) draw(...actor.args);
       const chips=updateSpray(s);
@@ -1077,6 +1143,8 @@
     const shadowProfiles={
       cone:[...ring(.52,.04,.49),[0,1.15,0]],
       barrier:boxCorners(1.12,.05,1.28,.25),
+      ramp:[-RAMP.halfWidth,RAMP.halfWidth].flatMap(x=>[
+        [x,.035,-RAMP.halfLength],[x,0,RAMP.halfLength],[x,RAMP.lipHeight,RAMP.halfLength]]),
       repair:boxCorners(.56,.50,1.36,.32),
       boost:[[0,.38,0],[-.56,.91,0],[.58,1.28,0],[.38,1.73,0],[-.10,1.73,0]],
       pine:[[0,0,0],...ring(.31,.27,.31),[0,1,0]],
@@ -1122,7 +1190,7 @@
       }
       return out;
     }
-    for(const type of ['cone','barrier','oil','pothole','boost','repair',...IMPACT_MESHES]) cars.set(type,faces(prop(type)));
+    for(const type of PROP_TYPES) cars.set(type,faces(prop(type)));
     const busShadows=new Map(fleet.models.map(bus=>[bus,boxCorners(bus.width/2,.15,bus.height,bus.length/2)]));
     function buildingModel(a,lowDetail) {
       const key=[a.type,a.side,a.variant,lowDetail].join('/');
@@ -1320,7 +1388,7 @@
       }
       drawDisc(light.sun,false,1-light.night);
       drawDisc(light.moon,true,light.night);
-      const busX=roadX(d)+(s.laneX||0)*LANE,busYaw=Math.atan(roadSlope(d))+(s.heading||0);
+      const pose=coachPose(s,d),busX=pose.x,busYaw=pose.yaw;
       const lampSin=Math.sin(busYaw),lampCos=Math.cos(busYaw);
       function litColor(col,fog=0,lamp=0,emission=null) {
         const warm=[1,.87,.62];
@@ -1338,7 +1406,8 @@
       function beamPower(forward,height) {
         if(forward<=0 || forward>=56) return 0;
         const fade=Math.min(1,Math.max(0,(forward-16)/40));
-        const vertical=(height-bus.headlamp[1]+.07*forward)/(.25+.16*forward);
+        const beamY=pose.y+bus.headlamp[1]*Math.cos(pose.pitch)-(bus.headlamp[2]+forward)*Math.sin(pose.pitch);
+        const vertical=(height-beamY+.07*forward)/(.25+.16*forward);
         return (1-fade*fade*(3-2*fade))*Math.max(0,1-vertical*vertical);
       }
       function headlightAt(x,height,z) {
@@ -1654,15 +1723,17 @@
         actors.push({type:o.type,x:roadX(z)+o.lane*LANE,z,y:pickup?.12*Math.sin(t*3+z*.06):0,
           yaw:Math.atan(roadSlope(z))+(pickup?.29*Math.sin(t*2.5+z*.17):0),ground:o.type==='oil'||o.type==='pothole'});
       }
-      if(busOpacity>0) actors.push({type:'bus',x:busX,y:.025,z:d,alpha:busOpacity,
-        yaw:busYaw,roll:(s.steer||0)*.072+(s.flat?.045:0),pitch:brakingPitch(s)});
+      if(busOpacity>0) actors.push({type:'bus',...pose,z:d,alpha:busOpacity});
+      landingShadow(s,bus,(sx,sz,alpha)=>{
+        actors.push({type:'jumpShade',ground:true,x:busX,y:.044,z:d,yaw:busYaw,sx,sz,alpha});
+      });
       actors.push(...updateSpray(s));
       impactParts(s,(type,x,y,z,yaw,roll,pitch,sx,sy,sz,alpha)=>{
         const ground=type==='oil'||type==='waterRipple'||type==='repairHalo'||type==='boostHalo';
         actors.push({type,x,y,z,yaw,roll,pitch,sx,sy,sz,alpha,ground});
       });
       for (const a of actors) {
-        const centerY=a.type==='bus' ? bus.height*.5 : (a.y||0)+(a.height||0)*.5;
+        const centerY=(a.y||0)+(a.type==='bus' ? bus.height : a.height||0)*.5;
         a.forward=(a.x-c.cx)*sn+(a.z-c.cz)*cs;
         a.depth=a.forward*cp-(centerY+groundBend(a.forward))*sp;
       }

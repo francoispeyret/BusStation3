@@ -219,8 +219,9 @@
     setDial(gauges.distance, Math.floor(state.distance), rolling);
     setDial(gauges.lap, state.lap, rolling);
     setDial(gauges.speed, Math.round(state.speed), rolling);
-    const effectLabel = state.slip ? 'Glissade' : state.boost ? 'Turbo' : state.flat ? 'Pneu crevé'
-      : state.shoulderContact > 0 ? 'Accotement' : '';
+    const canSpin = state.phase === 'driving' && state.jump?.long && !state.jump.spinDirection;
+    const effectLabel = canSpin ? 'Braque pour un 360°' : state.slip ? 'Glissade' : state.boost ? 'Turbo'
+      : state.flat ? 'Pneu crevé' : state.shoulderContact > 0 ? 'Accotement' : '';
     effect.hidden = !effectLabel;
     setText(effect,effectLabel);
   }

@@ -34,9 +34,9 @@ Lorsqu’un script ou une feuille de style modifiés ont déjà un suffixe `?v=`
 ## Vérifier et publier
 
 ```sh
-node --test tests/biomes.test.cjs
+node --test tests/*.test.cjs
 ```
 
-La suite suit l’ordre des scripts du HTML et s’arrête avant `world.js`. Elle couvre le tirage des biomes, les raccords du terrain, les modèles, les habitants et la conduite sur les accotements. Pour un changement de rendu ou d’interface, compléter dans le navigateur en vérifiant la démo d’accueil, puis le comportement modifié en partie.
+La suite suit l’ordre des scripts du HTML et s’arrête avant `world.js`. Elle couvre le tirage des biomes, les raccords du terrain, les modèles, les habitants, la conduite sur les accotements et les sauts sur tremplin. Pour un changement de rendu ou d’interface, compléter dans le navigateur en vérifiant la démo d’accueil, puis le comportement modifié en partie.
 
 Un push sur `main` déclenche le [workflow GitHub Pages](.github/workflows/pages.yml), qui publie directement `dist/`. Ce workflow ne lance pas les tests. La configuration d’hébergement [`.openai/hosting.json`](.openai/hosting.json) utilise également `dist/`.
