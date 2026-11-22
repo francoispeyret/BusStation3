@@ -2,6 +2,7 @@
   'use strict';
 
   const paths = {
+    settings: '<path d="M10 3h4l.6 2.4 1.6.9 2.4-.7 2 3.5-1.8 1.7v2.4l1.8 1.7-2 3.5-2.4-.7-1.6.9L14 21h-4l-.6-2.4-1.6-.9-2.4.7-2-3.5 1.8-1.7v-2.4L3.4 9.1l2-3.5 2.4.7 1.6-.9z"/><circle cx="12" cy="12" r="3"/>',
     gamepad: '<path d="M7 6.5h10c2 0 3.3 1.5 3.8 3.7l1.1 5.1c.6 3-1.7 4.7-3.7 3.1L15 16h-6l-3.2 2.4c-2.1 1.6-4.3-.2-3.7-3.1l1.1-5.1C3.7 8 5 6.5 7 6.5Z"/><path d="M7.5 9.5v4m-2-2h4m6.5.9h.01M18 10.2h.01" stroke-width="2.5"/>',
     trophy: '<path d="M7.5 3.5h9v5.7a4.5 4.5 0 0 1-9 0zM7 5.5H3.5v2a4.2 4.2 0 0 0 4.8 4m8.7-6h3.5v2a4.2 4.2 0 0 1-4.8 4M12 14v4m-4 2.5h8m-6-2h4"/>',
     volume: '<path d="m3 9 4-.1L12.5 4v16L7 15H3zM16 8a6 6 0 0 1 0 8m2.8-10.8a10 10 0 0 1 0 13.6"/>',
@@ -52,6 +53,10 @@
   const rankingPrefix = 'busstation3.result.';
   const memoryScores = new Map();
   const models = window.BusModels.models;
+  const settings = window.BusSettings;
+  const settingsButton = $('settings');
+  const detailLabels = {low:'Bas', medium:'Moyen', high:'Haut', extreme:'Extrême'};
+  const demoPacer = settings.createFramePacer();
   const modelKey = 'busstation3.busModel';
   const benchmarkClock = $('benchmark-clock'), benchmarkProgress = $('benchmark-progress');
   const benchmarkStageLabel = $('benchmark-stage');
@@ -126,12 +131,13 @@
     demo.lap = 1 + Math.floor(period);
     demo.lapProgress = period % 1;
     fadeDemoBus(dt);
-    renderer.render(demo);
+    if (demoPacer.due(now)) renderer.render(demo);
     if (!reducedMotion.matches) demoFrame = requestAnimationFrame(drawDemo);
   }
 
   function syncDemo() {
     cancelAnimationFrame(demoFrame);
+    demoPacer.reset();
     lastDemoTime = undefined;
     if (view !== 'home') return;
     const unavailable = !renderer || graphicsLost;
@@ -165,7 +171,7 @@
       requestAnimationFrame(() => {
         road.hidden = false;
         try {
-          renderer = window.BusWorld.init(road);
+          renderer = window.BusWorld.init(road, settings.current);
           renderer.render(demo);
         } catch {
           renderer?.dispose();
@@ -292,7 +298,7 @@
   }
   function rendererReady() {
     if (!renderer && !graphicsLost) {
-      try { renderer = window.BusWorld.init(road); } catch { /* Show the rendering error below. */ }
+      try { renderer = window.BusWorld.init(road, settings.current); } catch { /* Show the rendering error below. */ }
     }
     if (!renderer || graphicsLost) {
       openDialog('error','gamepad','Rendu indisponible','<p class="modal-desc">La scène de jeu n’a pas pu démarrer. Recharge la page pour réessayer.</p><button class="secondary" data-action="close">Fermer</button>');
@@ -336,13 +342,15 @@
     cabinet.classList.add('is-paused');
     modal.classList.toggle('finish-reveal', reveal);
     panel = kind;
+    settingsButton.setAttribute('aria-expanded', String(kind === 'settings'));
     title.toggleAttribute('autofocus', kind === 'finish');
     if (kind === 'finish') title.tabIndex = -1;
     title.textContent = heading;
     body.innerHTML = html;
     $('modal-symbol').innerHTML = icon(symbol);
     $('close-modal').hidden = kind === 'finish';
-    selectTab(kind === 'scores' ? 'scores' : kind.startsWith('benchmark') ? 'benchmark' : 'arcade');
+    const onBenchmark = kind.startsWith('benchmark') || view === 'benchmark';
+    selectTab(kind === 'scores' ? 'scores' : onBenchmark ? 'benchmark' : 'arcade');
     if (!modal.open) modal.showModal();
     syncDemo();
     const focus = kind === 'finish' ? title : body.querySelector('[data-initial-focus]') || $('close-modal');
@@ -351,6 +359,7 @@
   function closeDialog() {
     cabinet.classList.remove('is-paused');
     panel = '';
+    settingsButton.setAttribute('aria-expanded', 'false');
     if (modal.open) modal.close();
     selectTab(view === 'benchmark' ? 'benchmark' : 'arcade');
     syncDemo();
@@ -373,6 +382,42 @@
     closeDialog();
     game.resume();
     cabinet.focus({preventScroll:true});
+  }
+
+  let settingsPreview;
+  function previewSettings() {
+    cancelAnimationFrame(settingsPreview);
+    settingsPreview = requestAnimationFrame(() => {
+      if (panel !== 'settings' || !renderer || graphicsLost || document.hidden) return;
+      renderer.render(benchmark ? benchmark.route.state : view === 'home' ? demo : game.state);
+    });
+  }
+  function openSettings() {
+    if (benchmark) suspendBenchmark();
+    if (game.state.status === 'running') game.pause();
+    openDialog('settings','settings','Paramètres',$('settings-panel').innerHTML);
+    function bindSlider(id, key, format) {
+      const slider = $(id), output = $(id + '-value'), values = settings.choices[key];
+      function display(value) {
+        slider.value = String(Number(slider.min) + values.indexOf(value));
+        const label = format(value);
+        slider.setAttribute('aria-valuetext', label);
+        output.value = label;
+      }
+      display(settings.current[key]);
+      slider.addEventListener('input', () => {
+        const value = values[slider.valueAsNumber - Number(slider.min)];
+        const next = settings.set({[key]:value});
+        display(next[key]);
+        if (key !== 'targetFps') {
+          renderer?.setGraphicsSettings(next);
+          previewSettings();
+        }
+      });
+    }
+    bindSlider('graphics-detail', 'detail', value => detailLabels[value]);
+    bindSlider('target-fps', 'targetFps', value => value ? value + ' FPS' : 'Illimité');
+    bindSlider('resolution-scale', 'resolutionScale', value => value + '×');
   }
 
   function benchmarkPanel() {
@@ -408,6 +453,10 @@
     }
   }
   function drawBenchmark(timestamp) {
+    if (!benchmark.pacer.due(timestamp)) {
+      benchmark.frame = requestAnimationFrame(drawBenchmark);
+      return;
+    }
     const elapsedMs = benchmark.meter.frame(timestamp);
     if (elapsedMs >= window.BusBenchmark.durationMs) {
       lastBenchmarkReport = benchmark.meter.report();
@@ -435,9 +484,9 @@
     renderer.render(state);
     const meter = window.BusBenchmark.create({
       renderer:renderer.renderer, width:road.width, height:road.height,
-      pixelRatio:window.devicePixelRatio || 1, busModel:state.busModel
+      pixelRatio:window.devicePixelRatio || 1, busModel:state.busModel, graphicsSettings:settings.current
     });
-    benchmark = {origin, route, meter};
+    benchmark = {origin, route, meter, pacer:settings.createFramePacer()};
     updateBenchmarkHud(state, 0);
     resumeBenchmark();
   }
@@ -458,6 +507,8 @@
   function resumeBenchmark() {
     if (graphicsLost || document.hidden) { pauseBenchmark(); return; }
     closeDialog();
+    benchmark.pacer.reset();
+    benchmark.meter.recordSettings(settings.current);
     benchmark.route.setPlaying(true);
     benchmark.frame = requestAnimationFrame(drawBenchmark);
     cabinet.focus({preventScroll:true});
@@ -575,6 +626,10 @@
   }
   function dismiss() {
     if (benchmark) resumeBenchmark();
+    else if (panel === 'settings' && view === 'run') {
+      if (graphicsLost || document.hidden) pauseGame();
+      else resume();
+    }
     else if (panel === 'benchmark') returnFromBenchmark();
     else if (panel === 'error' && view === 'run') pauseGame();
     else if (panel === 'pause') resume();
@@ -615,6 +670,7 @@
   $('bus-prev').addEventListener('click', () => selectModel(-1));
   $('bus-next').addEventListener('click', () => selectModel(1));
   $('arcade-tab').addEventListener('click',enterArcade);
+  settingsButton.addEventListener('click',openSettings);
   $('brand').addEventListener('click',enterArcade);
   $('scores-tab').addEventListener('click',() => scores());
   $('benchmark-tab').addEventListener('click',benchmarkPanel);
@@ -644,6 +700,8 @@
     const full = fullscreen();
     const audioParent = full ? cornerActions : $('header-audio');
     if (audioControls.parentElement !== audioParent) audioParent.prepend(audioControls);
+    const settingsParent = full ? $('screen-settings') : document.querySelector('.topinner');
+    if (settingsButton.parentElement !== settingsParent) settingsParent.prepend(settingsButton);
     $('expand').innerHTML = icon(full ? 'shrink' : 'expand');
     $('expand').title = full ? 'Quitter le plein écran' : 'Plein écran';
     $('expand').setAttribute('aria-label',$('expand').title);
@@ -725,6 +783,7 @@
       return;
     }
     if (game.state.status !== 'running') return;
+    if (e.target === settingsButton && e.key === ' ') return;
     const key = e.key.toLowerCase();
     const buttonInput = [' ', 'enter'].includes(key) ? touchButtons.get(e.target.id) : undefined;
     const input = buttonInput ?? directions.get(key);
@@ -776,12 +835,14 @@
   road.addEventListener('webglcontextlost', () => {
     graphicsLost = true;
     syncDemo();
+    if (panel === 'settings') return;
     if (benchmark) { pauseBenchmark(); return; }
     if (game.state.status === 'running' || panel === 'pause') pauseGame();
   });
   road.addEventListener('webglcontextrestored', () => {
     graphicsLost = false;
     syncDemo();
+    if (panel === 'settings') { previewSettings(); return; }
     if (benchmark) { pauseBenchmark(); return; }
     if (view === 'run' && game.state.status === 'paused') {
       requestAnimationFrame(() => renderer.render(game.state));

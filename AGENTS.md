@@ -20,7 +20,7 @@ Tous les chemins du tableau sont relatifs à `dist/`.
 | --- | --- |
 | Accueil, commandes clavier et tactiles, compteurs, pause ou classement | `index.html` et `style.css` pour la présentation, `arcade.js` pour les interactions. Le classement, le choix du bus et les réglages audio utilisent `localStorage`. |
 | Conduite, vitesse, collisions, bonus, tours ou sons | `drive.js`. `BusDrive.create()` gère la simulation. Dans `arcade.js`, le rappel `onUpdate` transmet l’état au moteur de rendu et actualise les compteurs. |
-| Caméra, éclairage, ombres ou effets de route | `world.js`. `BusWorld.init()` essaie WebGL 2, WebGL puis Canvas 2D. Pour un effet visible dans les deux moteurs, examiner `gpuRenderer` et `canvasRenderer`. |
+| Caméra, éclairage, ombres ou effets de route | `world.js` gère la caméra et le repli Canvas 2D. Le rendu Three.js utilise WebGL 2, avec les objets de la scène dans `three-scene.js` et les lumières et ombres VSM dans `three-lighting.js`. |
 | Flotte et géométrie des bus | `bus-models.js` pour le catalogue et les maillages, `mesh.js` pour les primitives communes. La sélection sur l’accueil se trouve dans `arcade.js`. |
 | Paysages, terrain et habitants | Un fichier par paysage dans `biomes/`. `biomes/route.js` calcule le relief, les transitions et la position des objets pour les deux moteurs. Pour ajouter un paysage, suivre [le guide des biomes](dist/biomes/README.md). |
 | Jauge de vie, polices, images ou sons | `heart-meter.js` et `heart-meter.css` pour les cœurs. Les ressources se trouvent dans `assets/` et leurs licences dans `assets/licenses/`. |

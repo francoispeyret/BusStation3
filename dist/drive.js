@@ -549,6 +549,7 @@
   function create({ onUpdate = () => {}, onEvent = () => {}, onFinish = () => {} } = {}) {
     const state = startingState();
     const audio = makeSound();
+    const renderPacer = window.BusSettings.createFramePacer();
     let frameId = 0;
     let previousTime;
     let wave = 0;
@@ -930,12 +931,14 @@
           return;
         }
       }
-      onUpdate(state);
+      // Physics and input still advance on every display tick, including skipped draws.
+      if (renderPacer.due(timestamp)) onUpdate(state);
       if (state.status === 'running') frameId = requestAnimationFrame(tick);
     }
 
     function beginFrames() {
       previousTime = undefined;
+      renderPacer.reset();
       state.status = 'running';
       audio.setRocket(state.rocketRemaining > 0);
       if (state.phase !== 'stopping') audio.update(state);

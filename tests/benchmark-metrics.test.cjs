@@ -57,10 +57,14 @@ test('download contains the report, render dimensions, and measured stage data',
     URL: {createObjectURL(file) { blob = file; return 'blob:test'; }, revokeObjectURL(url) { revoked = url; }},
     setTimeout(callback) { cleanup = callback; }
   });
-  const run = benchmark.create({renderer: 'WebGL 2', width: 1920, height: 1080, pixelRatio: 2, busModel: 'express'});
+  const graphicsSettings = {detail:'high', targetFps:60, resolutionScale:2};
+  const run = benchmark.create({renderer: 'WebGL 2', width: 1920, height: 1080, pixelRatio: 2, busModel: 'express', graphicsSettings});
+  run.recordSettings(graphicsSettings);
   run.frame(0);
   run.stage('hills', 'Collines');
   run.frame(10);
+  run.pause();
+  run.recordSettings({...graphicsSettings, targetFps:30});
   benchmark.download(run.report());
   assert.ok(clicked && removed);
   assert.equal(link.href, 'blob:test');
@@ -70,6 +74,8 @@ test('download contains the report, render dimensions, and measured stage data',
   assert.equal(exported.environment.canvasAtStart.width, 1920);
   assert.equal(exported.environment.devicePixelRatio, 2);
   assert.equal(exported.environment.renderer, 'WebGL 2');
+  assert.deepEqual(exported.environment.graphicsSettingsAtStart, graphicsSettings);
+  assert.deepEqual(exported.environment.graphicsSettingsChanges, [{elapsedMs:10, ...graphicsSettings, targetFps:30}]);
   assert.equal(exported.stages[0].id, 'hills');
   assert.equal(exported.summary.frames, 1);
   cleanup();

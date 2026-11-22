@@ -17,16 +17,25 @@
     };
   }
 
-  function create({renderer, width, height, pixelRatio, busModel} = {}) {
+  function create({renderer, width, height, pixelRatio, busModel, graphicsSettings} = {}) {
     const startedAt = new Date().toISOString();
     const environment = {
       renderer, busModel, canvasAtStart: {width, height, unit: 'drawing-buffer pixels'},
-      devicePixelRatio: pixelRatio, userAgent: window.navigator?.userAgent
+      devicePixelRatio: pixelRatio, userAgent: window.navigator?.userAgent,
+      graphicsSettingsAtStart: graphicsSettings
     };
     const stages = new Map();
     let currentStage;
     let previousTime = null;
     let elapsedMs = 0;
+    let lastSettings = graphicsSettings;
+
+    function recordSettings(settings) {
+      if (lastSettings && lastSettings.detail === settings.detail && lastSettings.targetFps === settings.targetFps &&
+          lastSettings.resolutionScale === settings.resolutionScale) return;
+      (environment.graphicsSettingsChanges ??= []).push({elapsedMs:round(elapsedMs), ...settings});
+      lastSettings = settings;
+    }
 
     function stage(id, label) {
       if (currentStage && currentStage.id === id) return;
@@ -59,7 +68,7 @@
     }
 
     return {
-      frame, stage, report,
+      frame, stage, report, recordSettings,
       get elapsedMs() { return elapsedMs; },
       pause() { previousTime = null; }
     };

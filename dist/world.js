@@ -1,4 +1,4 @@
-/* Bus Station 3. A small, batched WebGL renderer with streamed track sections. */
+/* Bus Station 3. Three.js driving scene and Canvas 2D fallback. */
 (() => {
   'use strict';
 
@@ -7,7 +7,7 @@
   const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)');
   const {roadX, roadSlope, periodForLap, sceneryForLap, lapAtRoadZ, roadZForLap, DRIVABLE_HALF_WIDTH, RAMP, ROCKET_METRES} = window.BusDrive;
   const LAP_SIGN_OFFSET = DRIVABLE_HALF_WIDTH + 2.85;
-  const {Mesh,rgb,random,lettering,gpuGeometry} = window.BusMesh;
+  const {Mesh,rgb,random,lettering} = window.BusMesh;
   const fleet = window.BusModels;
   const fleetById = new Map(fleet.models.map(model => [model.id, model]));
   const {CHUNK,LANE,ROAD,biomeFor,routeThemeAt,terrainScale,terrainHeight:heightAtOffset,terrainHeightAt,surfaceColorAt,shoulderColorAt,
@@ -15,6 +15,12 @@
     biomeActorsInSection,biomeActorPose} = window.BusRoute;
   const BEND_START = 24;
   const BEND_RATE = .00095;
+  const graphicsLevels = {
+    low:     {shadowWidth:512,  lighting:0,   shadowLayers:.5},
+    medium:  {shadowWidth:768,  lighting:0,   shadowLayers:1},
+    high:    {shadowWidth:1024, lighting:.55, shadowLayers:1.5},
+    extreme: {shadowWidth:1536, lighting:1,   shadowLayers:2}
+  };
   const outerBands = Array.from({length:14}, (_,i) => 88 + 24*i);
   const meadowBands = [...outerBands.map(x => -x).reverse(),
     ...Array.from({length:33}, (_,i) => (i-16)*4), ...outerBands];
@@ -98,6 +104,7 @@
       for(const band of biome.roadDetails) strip(z,z+4,band.left,band.right,band.y,band.color);
       for(const mark of biome.roadPaint?.(start+z)||[]) strip(z,z+mark.length,mark.left,mark.right,mark.y,mark.color);
     }
+    m.groundEnd=m.data.length;
     const signLap=lapAtRoadZ(start+CHUNK), signZ=roadZForLap(signLap);
     if(signLap>1 && signZ>=start && signZ<start+CHUNK) {
       lapSign(m,signLap,roadX(signZ)+LAP_SIGN_OFFSET,0,signZ-start,lapBiomes);
@@ -585,11 +592,17 @@
 
   // At sunrise the cast shadow can leave the screen. A soft spot beneath the
   // airborne coach keeps its position on the road readable until touchdown.
-  function landingShadow(s,bus,emit) {
-    if(!s.jump) return;
+  function landingSpot(s,bus) {
+    if(!s.jump) return null;
     const h=s.jump.height, spread=1+.045*h, opacity=Math.min(1,h)*.16/(1+.11*h);
+    return {radiusX:bus.width*.60*spread,radiusZ:bus.length*.49*spread,opacity};
+  }
+
+  function landingShadow(s,bus,emit) {
+    const spot=landingSpot(s,bus);
+    if(!spot) return;
     for(const scale of [1.25,1,.75,.5]) {
-      emit(bus.width*.60*spread*scale,bus.length*.49*spread*scale,opacity);
+      emit(spot.radiusX*scale,spot.radiusZ*scale,spot.opacity);
     }
   }
 
@@ -663,186 +676,20 @@
     return [cam.f*scale*(body.x*ca-body.z*sa)/(cam.aspect*depth),cam.f*(dy*cp+forward*sp)/depth];
   }
 
-  // A light ray keeps xz - y * sun.xz / sun.y constant. Using its ground
-  // intersection as the map coordinate keeps both cascades aligned to the road.
-  // Work relative to the camera, before applying the curved-horizon effect.
-  const lightCoordinates = `
-    uniform vec2 lightSlope;
-    uniform float cameraHeight;
-    vec3 lightPoint(vec3 relative) {
-      float height = relative.y + cameraHeight;
-      return vec3(relative.xz - height * lightSlope, (height + 8.0) / 56.0);
-    }`;
-  const momentPacking = `
-    vec4 packMoments(vec2 v) {
-      vec2 scaled = clamp(v, 0.0, 1.0) * 255.0;
-      return vec4(floor(scaled)/255.0, fract(scaled));
-    }
-    vec2 moments(vec4 value) { return value.rg + value.ba / 255.0; }`;
-  const shaderPrecision = `
-    #ifdef GL_FRAGMENT_PRECISION_HIGH
-    precision highp float;
-    #else
-    precision mediump float;
-    #endif
-  `;
-  const casterVertex = `
-    attribute vec3 aPos;
-    uniform vec3 offset;
-    uniform mat3 model;
-    uniform vec4 bounds;
-    ${lightCoordinates}
-    varying mediump float height;
-    void main() {
-      vec3 p = lightPoint(offset + model * aPos);
-      height = p.z;
-      gl_Position = vec4((p.xy - bounds.xy) * bounds.zw * 2.0, 1.0 - 2.0*p.z, 1.);
-    }`;
-  const casterFragment = `${shaderPrecision}
-    varying mediump float height;
-    uniform float opacity;
-    ${momentPacking}
-    void main() {
-      // A dissolving collision object gradually stops blocking the sun.
-      // Stable screen-door coverage becomes continuous after the spatial filter.
-      if (opacity < 1.0 && fract(dot(mod(floor(gl_FragCoord.xy), 4.0),
-          vec2(.3125,.25))) >= opacity) discard;
-      gl_FragColor = packMoments(vec2(height, height*height));
-    }`;
-  const filterVertex = `attribute vec2 aPos; varying mediump vec2 uv;
-    void main(){uv=aPos*.5+.5;gl_Position=vec4(aPos,0.,1.);}`;
-  const filterFragment = `${shaderPrecision}
-    varying mediump vec2 uv;
-    uniform mediump sampler2D source;
-    uniform vec2 stepUV;
-    ${momentPacking}
-    void main() {
-      vec2 m = .227027 * moments(texture2D(source,uv));
-      m += .316216 * (moments(texture2D(source,uv-1.384615*stepUV))
-                    + moments(texture2D(source,uv+1.384615*stepUV)));
-      m += .070270 * (moments(texture2D(source,uv-3.230769*stepUV))
-                    + moments(texture2D(source,uv+3.230769*stepUV)));
-      gl_FragColor = packMoments(m);
-    }`;
-
-  const vertexCode = `
-    attribute vec3 aPos;
-    attribute vec3 aColor;
-    uniform vec3 offset;
-    uniform mat3 model;
-    uniform vec4 cameraAngles;
-    uniform vec3 projection;
-    varying lowp vec3 color;
-    uniform vec3 coachOffset;
-    uniform mat3 coachFrame;
-    varying mediump vec3 busPoint;
-    varying lowp float lens;
-    ${lightCoordinates}
-    uniform vec4 nearBounds, farBounds;
-    uniform vec2 farLightSlope;
-    varying mediump vec4 shadowUV;
-    varying mediump float receiverHeight;
-    varying lowp float shadowVisibility;
-    void main() {
-      vec3 w = offset + model * aPos;
-      busPoint = (w - coachOffset) * coachFrame;
-      float isLamp=step(1.9,aColor.r), isTail=step(3.9,aColor.r), isSign=step(5.9,aColor.r), isFlame=step(7.9,aColor.r);
-      lens = isFlame>.5 ? 2. : isSign>.5 ? .5 : isLamp-2.*isTail;
-      color = aColor - vec3(2.*(isLamp+isTail+isSign+isFlame),0.,0.);
-      vec3 light = lightPoint(w);
-      vec2 farPoint = w.xz - (w.y + cameraHeight)*farLightSlope;
-      shadowUV = vec4((light.xy - nearBounds.xy)*nearBounds.zw,
-                      (farPoint - farBounds.xy)*farBounds.zw) + .5;
-      receiverHeight = light.z;
-      float forward = w.x*cameraAngles.y + w.z*cameraAngles.x;
-      float beyond = max(0.0, forward - ${BEND_START.toFixed(1)});
-      w.y -= projection.z * beyond * beyond;
-      float viewX = w.x*cameraAngles.x - w.z*cameraAngles.y;
-      float viewY = w.y*cameraAngles.z + forward*cameraAngles.w;
-      float depth = forward*cameraAngles.z - w.y*cameraAngles.w;
-      gl_Position = vec4(viewX*projection.x,viewY*projection.y,depth*1.0018 - .56, depth);
-      float fog = smoothstep(55.0,255.0,forward)*.48;
-      shadowVisibility = 1.0-fog;
-    }`;
-  const fragmentCode=`${shaderPrecision}
-    varying lowp vec3 color;
-    varying mediump vec3 busPoint;
-    varying lowp float lens;
-    uniform lowp float opacity, shadowStrength, headlamps;
-    uniform mediump vec3 headlamp, taillamp;
-    uniform mediump vec3 rocketLight;
-    uniform mediump vec3 ambientTint, fogColor;
-    uniform mediump sampler2D nearShadow, farShadow;
-    varying mediump vec4 shadowUV;
-    varying mediump float receiverHeight;
-    varying lowp float shadowVisibility;
-    ${momentPacking}
-    float edge(vec2 uv) {
-      vec2 halfUV = abs(uv-.5);
-      return max(halfUV.x,halfUV.y);
-    }
-    float occlusion(vec4 sampleValue, float bias) {
-      vec2 m = moments(sampleValue);
-      // Scale before squaring to retain small offsets on mediump-only GPUs.
-      float delta = max(0., m.x - receiverHeight - bias) * 16.;
-      if (delta<=0.) return 0.;
-      float variance = max(.0046, (m.y*16. - m.x*(m.x*16.))*16.);
-      return delta*delta / (delta*delta + variance);
-    }
-    float beamLight(vec3 p) {
-      if(p.z<=0. || p.z>=56.) return 0.;
-      // The dipped axes meet the road roughly 15 m ahead. The beams first
-      // form separate pools, then overlap as their angular width increases.
-      float axis=headlamp.x+.055*p.z, width=.26+.18*p.z;
-      float vertical=(p.y+.070*p.z)/(.20+.18*p.z);
-      vec2 lateral=(p.x+vec2(-axis,axis))/width;
-      vec2 beam=1.-smoothstep(vec2(.04),vec2(1.35),lateral*lateral+vertical*vertical);
-      float cutoff=1.-smoothstep(.04+.012*p.z,.45+.055*p.z,p.y);
-      return (beam.x+beam.y-beam.x*beam.y)*cutoff*(1.-smoothstep(16.,56.,p.z));
-    }
-    void main(){
-      float shade=0.;
-      if (shadowStrength>0.) {
-        float blend=smoothstep(.34,.47,edge(shadowUV.xy));
-        if (blend<1.) shade=(1.-blend)*occlusion(texture2D(nearShadow,shadowUV.xy),.0007);
-        if (blend>0.) shade+=blend*(1.-smoothstep(.46,.495,edge(shadowUV.zw)))
-          *occlusion(texture2D(farShadow,shadowUV.zw),.0015);
-      }
-      vec3 lit=color*ambientTint*mix(vec3(1.),vec3(.58,.64,.72),shade*shadowStrength);
-      if(headlamps>0.) {
-        vec3 lampPoint=busPoint-vec3(0.,headlamp.yz);
-        lit+=headlamps*beamLight(lampPoint)*(color*vec3(.93,.78,.50)+vec3(.065,.045,.012));
-        // Warm spill on the immediate housing leaves the lenses brighter than the grille.
-        vec3 toLens=vec3(abs(lampPoint.x)-headlamp.x,lampPoint.y,2.*lampPoint.z);
-        float housing=1.-smoothstep(.09,.36,length(toLens));
-        lit+=headlamps*housing*vec3(.34,.22,.08);
-        vec3 toTail=(vec3(abs(busPoint.x),busPoint.yz)-taillamp)*vec3(1.,1.,2.);
-        lit+=headlamps*(1.-smoothstep(.045,.22,length(toTail)))*vec3(.27,.018,.009);
-        vec3 lampTint=lens<0. ? vec3(1.42,.46,.30) : vec3(1.16,1.09,1.03);
-        lit=mix(lit,min(vec3(1.),color*lampTint),headlamps*abs(lens));
-      }
-      if(rocketLight.z>0.) {
-        vec3 delta=(busPoint-vec3(0.,rocketLight.xy))/vec3(2.8,10.,3.8);
-        float spill=max(0.,1.-dot(delta,delta));
-        lit+=rocketLight.z*spill*spill*(.53+.45*color)*vec3(1.,.37,.055);
-      }
-      if(lens>1.5) lit=color;
-      gl_FragColor=vec4(mix(fogColor,lit,shadowVisibility),opacity);
-    }`;
-  const skyVertex=`attribute vec2 aPos; varying mediump vec2 uv;
-    void main(){uv=aPos;gl_Position=vec4(aPos,0.,1.);}`;
+  const skyVertex=`varying mediump vec2 screenPoint;
+    void main(){screenPoint=position.xy;gl_Position=vec4(position.xy,1.,1.);}`;
   const skyFragment=`precision mediump float;
-    varying mediump vec2 uv;
+    varying mediump vec2 screenPoint;
     uniform vec4 discs;
     uniform vec3 horizonColor, zenithColor;
     uniform float aspect, horizonY, night;
     void main(){
-      vec3 col=mix(horizonColor,zenithColor,smoothstep(-.08,.46,uv.y-horizonY));
+      vec3 col=mix(horizonColor,zenithColor,smoothstep(-.08,.46,screenPoint.y-horizonY));
       vec2 scale=vec2(aspect,1.);
-      float r=length((uv-discs.xy)*scale);
+      float r=length((screenPoint-discs.xy)*scale);
       col=mix(col,vec3(1.,.76,.45),.46*(1.-night)*(1.-smoothstep(.048,.36,r)));
       col=mix(col,vec3(1.,.93,.72),(1.-night)*(1.-smoothstep(.048,.052,r)));
-      vec2 moon=(uv-discs.zw)*scale;
+      vec2 moon=(screenPoint-discs.zw)*scale;
       float m=length(moon);
       col=mix(col,vec3(.57,.69,.91),.24*night*(1.-smoothstep(.045,.24,m)));
       float maria=1.-smoothstep(.007,.014,length(moon-vec2(-.014,.012)));
@@ -852,473 +699,115 @@
       gl_FragColor=vec4(col,1.);
     }`;
 
-  function program(gl,is2,vert,frag) {
-    const compile=(type,src) => {
-      if(is2) {
-        src=src.replace(/\battribute\b/g,'in').replace(/\bvarying\b/g,type===gl.VERTEX_SHADER?'out':'in');
-        src=src.replace(/\btexture2D\b/g,'texture');
-        if(type===gl.FRAGMENT_SHADER) src=src.replace('void main()', 'out lowp vec4 result; void main()').replace('gl_FragColor','result');
-        src='#version 300 es\n'+src;
-      }
-      const sh=gl.createShader(type);
-      gl.shaderSource(sh,src); gl.compileShader(sh);
-      if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS)) throw Error(gl.getShaderInfoLog(sh));
-      return sh;
+  function createSky(THREE,scene) {
+    const uniforms={
+      discs:{value:new THREE.Vector4()}, aspect:{value:1}, horizonY:{value:0}, night:{value:0},
+      horizonColor:{value:new THREE.Vector3()}, zenithColor:{value:new THREE.Vector3()}
     };
-    const a=compile(gl.VERTEX_SHADER,vert),b=compile(gl.FRAGMENT_SHADER,frag),p=gl.createProgram();
-    gl.attachShader(p,a); gl.attachShader(p,b);
-    gl.bindAttribLocation(p,0,'aPos'); gl.bindAttribLocation(p,1,'aColor');
-    gl.linkProgram(p); gl.deleteShader(a); gl.deleteShader(b);
-    if(!gl.getProgramParameter(p,gl.LINK_STATUS)) throw Error(gl.getProgramInfoLog(p));
-    return p;
+    const geometry=new THREE.BufferGeometry();
+    geometry.setAttribute('position',new THREE.Float32BufferAttribute([-1,-1,0,3,-1,0,-1,3,0],3));
+    const material=new THREE.ShaderMaterial({
+      vertexShader:skyVertex,fragmentShader:skyFragment,uniforms,depthTest:false,depthWrite:false
+    });
+    const sky=new THREE.Mesh(geometry,material);
+    sky.frustumCulled=false;
+    sky.renderOrder=-1000;
+    scene.add(sky);
+    return {
+      update(cam,light) {
+        const sun=light.night<1 && projectDisc(light.sun,cam);
+        const moon=light.night>0 && projectDisc(light.moon,cam);
+        uniforms.discs.value.set(sun?sun[0]:0,sun?sun[1]:-10,moon?moon[0]:0,moon?moon[1]:-10);
+        uniforms.aspect.value=cam.aspect;
+        uniforms.horizonY.value=cam.f*Math.tan(cam.pitch);
+        uniforms.night.value=light.night;
+        uniforms.horizonColor.value.fromArray(light.horizon);
+        uniforms.zenithColor.value.fromArray(light.zenith);
+      },
+      dispose() { scene.remove(sky); geometry.dispose(); material.dispose(); }
+    };
   }
 
-  function gpuRenderer(canvas,gl,is2) {
-    let scene,sky,uniform,skyUniform,screenTriangle,trail,range,items, lost=false;
-    const coaches = new Map();
-    const updateSpray=shoulderSpray();
-    let sprayMesh, vertexArrays, boundMesh;
-    let caster,filter,casterUniform,filterUniform,rawMap,blurMap,nearMap,farMap;
-    const transientShadowDepth=[gl.DEPTH_ATTACHMENT];
-    let farSample=null;
-    const chunks=new Map();
-    const animatedMeshes=new Map();
-    let cachedLapBiomes;
-    const modelMatrix=new Float32Array(9);
-    function transform(a,roll,pitch,sx=1,sy=1,sz=1) {
-      const cy=Math.cos(a), sn=Math.sin(a), cr=Math.cos(roll), sr=Math.sin(roll);
-      const cp=Math.cos(pitch), sp=Math.sin(pitch);
-      modelMatrix[0]=cy*cr*sx; modelMatrix[1]=sr*sx; modelMatrix[2]=-sn*cr*sx;
-      modelMatrix[3]=(sn*sp-cy*sr*cp)*sy; modelMatrix[4]=cr*cp*sy; modelMatrix[5]=(sn*sr*cp+cy*sp)*sy;
-      modelMatrix[6]=(sn*cp+cy*sr*sp)*sz; modelMatrix[7]=-cr*sp*sz; modelMatrix[8]=(cy*cp-sn*sr*sp)*sz;
-      return modelMatrix;
-    }
-    const identity=transform(0,0,0).slice();
-    const locations=(p,names)=>Object.fromEntries(names.map(n=>[n,gl.getUniformLocation(p,n)]));
-    function shadowTarget(width,height,withDepth=false) {
-      const texture=gl.createTexture(), framebuffer=gl.createFramebuffer();
-      gl.bindTexture(gl.TEXTURE_2D,texture);
-      gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,width,height,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
-      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
-      gl.bindFramebuffer(gl.FRAMEBUFFER,framebuffer);
-      gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,texture,0);
-      let depth=null;
-      if(withDepth) {
-        depth=gl.createRenderbuffer();
-        gl.bindRenderbuffer(gl.RENDERBUFFER,depth);
-        gl.renderbufferStorage(gl.RENDERBUFFER,gl.DEPTH_COMPONENT16,width,height);
-        gl.framebufferRenderbuffer(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.RENDERBUFFER,depth);
-      }
-      return {texture,framebuffer,depth,width,height};
-    }
-    function configureAttributes(mesh) {
-      gl.bindBuffer(gl.ARRAY_BUFFER,mesh.buf);
-      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,mesh.elements);
-      gl.enableVertexAttribArray(0);
-      if(mesh.screen) {
-        gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
-        gl.disableVertexAttribArray(1);
-      } else {
-        gl.vertexAttribPointer(0,3,gl.FLOAT,false,24,0);
-        gl.vertexAttribPointer(1,3,gl.FLOAT,false,24,12);
-        gl.enableVertexAttribArray(1);
-      }
-    }
-    function createMesh(vertices,indices=null,screen=false) {
-      const mesh={buf:gl.createBuffer(),elements:indices?gl.createBuffer():null,screen,
-        n:indices?.length ?? (vertices?.length || 0)/(screen?2:6)};
-      if(vertexArrays) {
-        mesh.vao=vertexArrays.create();
-        vertexArrays.bind(mesh.vao);
-      }
-      configureAttributes(mesh);
-      if(vertices) gl.bufferData(gl.ARRAY_BUFFER,vertices,gl.STATIC_DRAW);
-      if(indices) gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,indices,gl.STATIC_DRAW);
-      boundMesh=mesh;
-      return mesh;
-    }
-    function upload(model) {
-      const {vertices,indices}=gpuGeometry(model);
-      return createMesh(vertices,indices);
-    }
-    function bindMesh(mesh) {
-      if(boundMesh===mesh) return;
-      if(vertexArrays) vertexArrays.bind(mesh.vao);
-      else configureAttributes(mesh);
-      boundMesh=mesh;
-    }
-    function triangles(mesh) {
-      if(mesh.elements) gl.drawElements(gl.TRIANGLES,mesh.n,gl.UNSIGNED_SHORT,0);
-      else gl.drawArrays(gl.TRIANGLES,0,mesh.n);
-    }
-    function deleteMesh(mesh) {
-      if(boundMesh===mesh) boundMesh=null;
-      if(vertexArrays) vertexArrays.remove(mesh.vao);
-      if(mesh.elements) gl.deleteBuffer(mesh.elements);
-      gl.deleteBuffer(mesh.buf);
-    }
-    // Static scenery can extend beyond its section. Bound the actual vertices so
-    // shadow passes can skip a complete mesh without dropping an off-screen caster.
-    function sectionBounds(data) {
-      let minY=Infinity,maxY=-Infinity,minZ=Infinity,maxZ=-Infinity;
-      for(let i=1;i<data.length;i+=6) {
-        const y=data[i], z=data[i+1];
-        minY=Math.min(minY,y); maxY=Math.max(maxY,y);
-        minZ=Math.min(minZ,z); maxZ=Math.max(maxZ,z);
-      }
-      return {minY,maxY,minZ,maxZ};
-    }
-    function prepare() {
-      // Extensions and vertex arrays belong to the current graphics context.
-      const oes=is2?null:gl.getExtension('OES_vertex_array_object');
-      vertexArrays=is2 ? {create:()=>gl.createVertexArray(),bind:v=>gl.bindVertexArray(v),remove:v=>gl.deleteVertexArray(v)}
-        : oes && {create:()=>oes.createVertexArrayOES(),bind:v=>oes.bindVertexArrayOES(v),remove:v=>oes.deleteVertexArrayOES(v)};
-      boundMesh=null;
-      scene=program(gl,is2,vertexCode,fragmentCode);
-      sky=program(gl,is2,skyVertex,skyFragment);
-      caster=program(gl,is2,casterVertex,casterFragment);
-      filter=program(gl,is2,filterVertex,filterFragment);
-      skyUniform=locations(sky,['discs','aspect','horizonY','night','horizonColor','zenithColor']);
-      uniform=locations(scene,['offset','model','cameraAngles','projection','opacity','ambientTint','fogColor',
-        'coachOffset','coachFrame','headlamp','taillamp','headlamps','rocketLight','shadowStrength','lightSlope','farLightSlope',
-        'cameraHeight','nearBounds','farBounds','nearShadow','farShadow']);
-      casterUniform=locations(caster,['offset','model','lightSlope','cameraHeight','bounds','opacity']);
-      filterUniform=locations(filter,['source','stepUV']);
-      gl.useProgram(filter);
-      gl.uniform1i(filterUniform.source,0);
-      const limit=Math.min(gl.getParameter(gl.MAX_TEXTURE_SIZE),gl.getParameter(gl.MAX_RENDERBUFFER_SIZE));
-      const width=Math.min(512,limit),height=Math.min(640,limit);
-      rawMap=shadowTarget(width,height,true);
-      blurMap=shadowTarget(width/2,height/2);
-      nearMap=shadowTarget(width/2,height/2);
-      farMap=shadowTarget(width/2,height/2);
-      gl.bindFramebuffer(gl.FRAMEBUFFER,null);
-      gl.useProgram(scene);
-      gl.uniform1i(uniform.nearShadow,0);
-      gl.uniform1i(uniform.farShadow,1);
-      gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,farMap.texture);
-      gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,nearMap.texture);
-      screenTriangle=createMesh(new Float32Array([-1,-1,3,-1,-1,3]),null,true);
-      coaches.clear();
-      range=upload(backdrop());
-      const streak=new Mesh();
-      for(const side of [-1,1]) for (const [x,l] of [[.94,1.5],[1.09,.88]]) {
-        streak.tri([side*(x-.038),0,0],[side*(x+.038),0,0],[side*x,0,-l],'#ffcc66');
-      }
-      trail=upload(streak);
-      sprayMesh=createMesh(null);
-      items={};
-      for(const type of PROP_TYPES) items[type]=upload(prop(type));
-      gl.enable(gl.DEPTH_TEST);
-      gl.disable(gl.CULL_FACE);
-      chunks.clear();
-      animatedMeshes.clear();
-      farSample=null;
-    }
-    prepare();
-    const lostHandler=e=>{e.preventDefault();lost=true;};
-    const restoreHandler=()=>{prepare();lost=false;};
-    canvas.addEventListener('webglcontextlost',lostHandler);
-    canvas.addEventListener('webglcontextrestored',restoreHandler);
-    let quality=1, lastClock=0, frameMs=16, count=0, cssW=0, cssH=0;
-    const observe=typeof ResizeObserver==='function' ? new ResizeObserver(entries=>{
-      const b=entries[0].contentRect;cssW=b.width;cssH=b.height;
-    }) : null;
-    if(observe) observe.observe(canvas);
-
+  function createDrivingScene(canvas,context,graphics) {
+    const THREE=window.THREE;
+    const renderer=new THREE.WebGLRenderer({canvas,context,antialias:true});
+    const scene=new THREE.Scene();
+    const view=new THREE.PerspectiveCamera(60,1,.28,312);
+    const sky=createSky(THREE,scene);
+    const lighting=window.BusThreeLighting.create(THREE,scene,renderer,{BEND_START,BEND_RATE});
+    const objects=window.BusThreeScene.create(THREE,scene,{
+      FAR,groundBend,section,backdrop,prop,PROP_TYPES,impactParts,landingSpot,shoulderSpray,chipCorners,lighting
+    });
+    const viewport=context.getParameter(context.MAX_VIEWPORT_DIMS);
+    const maxSize=context.getParameter(context.MAX_RENDERBUFFER_SIZE);
     function render(s) {
-      if(lost||gl.isContextLost()) return;
-      const routeChanged=cachedLapBiomes!==s.lapBiomes;
-      if(routeChanged) {
-        for(const mesh of chunks.values()) deleteMesh(mesh);
-        chunks.clear();
-        farSample=null;
-        cachedLapBiomes=s.lapBiomes;
-      }
-      const clock=performance.now(), delta=clock-lastClock;
-      lastClock=clock;
-      // Use the same pixel workload on every benchmark pass, including after a slow race.
-      const benchmark=s.benchmarkStage!==undefined;
-      if(!benchmark) {
-        if(delta>1&&delta<1000) frameMs+=.06*(Math.min(delta,125)-frameMs);
-        if(++count%100===0) {
-          if(frameMs>21) quality=Math.max(.6,quality-.12);
-          else if(frameMs<17) quality=Math.min(1,quality+.06);
-        }
-      }
-      // A mode switch can resize the canvas before ResizeObserver delivers the new bounds.
-      const cw=(!routeChanged&&cssW)||canvas.clientWidth||canvas.width||640;
-      const ch=(!routeChanged&&cssH)||canvas.clientHeight||canvas.height||400;
-      const scale=Math.min(1.65,window.devicePixelRatio||1,1900/cw,1900/ch)*(benchmark?1:quality);
+      const cw=canvas.clientWidth||640, ch=canvas.clientHeight||400;
+      const scale=Math.min(graphics.resolutionScale,maxSize/cw,maxSize/ch,viewport[0]/cw,viewport[1]/ch);
       const w=Math.max(1,Math.round(cw*scale)),h=Math.max(1,Math.round(ch*scale));
-      if(canvas.width!==w||canvas.height!==h) {canvas.width=w;canvas.height=h;}
-      const bus=fleetById.get(s.busModel)||fleet.models[0], busOpacity=s.busOpacity??1;
-      if(!coaches.has(bus)) coaches.set(bus,upload(fleet.mesh(bus.id)));
-      const d=s.roadZ ?? s.distance ?? 0, t=s.time||0, cam=camera(s,w/h,bus);
-      const light=lapLighting(s), sun=light.direction;
-      const solar=light.night<1 && projectDisc(light.sun,cam);
-      const lunar=light.night>0 && projectDisc(light.moon,cam);
-      let transformUniform=uniform;
-      let identityUniform=null;
-      function draw(mesh,x,y,z,a=0,roll=0,pitch=0,sx=1,sy=1,sz=1,fadeSolid=false) {
-        // Consecutive track sections differ only by translation in both shadow and colour passes.
-        if(a===0 && roll===0 && pitch===0 && sx===1 && sy===1 && sz===1) {
-          if(identityUniform!==transformUniform) gl.uniformMatrix3fv(transformUniform.model,false,identity);
-          identityUniform=transformUniform;
-        } else {
-          gl.uniformMatrix3fv(transformUniform.model,false,transform(a,roll,pitch,sx,sy,sz));
-          identityUniform=null;
-        }
-        gl.uniform3f(transformUniform.offset,x-cam.cx,y-cam.cy,z-cam.cz);
-        bindMesh(mesh);
-        // Fade the exterior silhouette without accumulating alpha on hidden interior faces.
-        if(fadeSolid) {
-          gl.colorMask(false,false,false,false);
-          gl.depthMask(true);
-          triangles(mesh);
-          gl.depthMask(false);
-          gl.colorMask(true,true,true,true);
-          gl.depthFunc(gl.LEQUAL);
-        }
-        triangles(mesh);
-        if(fadeSolid) gl.depthFunc(gl.LESS);
+      if(canvas.width!==w || canvas.height!==h) renderer.setSize(w,h,false);
+      const bus=fleetById.get(s.busModel)||fleet.models[0], d=s.roadZ??s.distance??0;
+      const cam=camera(s,w/h,bus), light=lapLighting(s), pose=coachPose(s,d);
+      const rocket=rocketAttachment(s,bus,pose,d), busOpacity=s.busOpacity??1;
+      const fov=THREE.MathUtils.radToDeg(2*Math.atan(1/cam.f));
+      if(view.fov!==fov || view.aspect!==cam.aspect) {
+        view.fov=fov;
+        view.aspect=cam.aspect;
+        view.updateProjectionMatrix();
       }
-      const intro=s.introProgress<1;
-      const skyline=skylineScaleAt(d+185*Math.cos(cam.a),s.lapBiomes);
-      const start=Math.floor((intro ? d-FAR : cam.cz-5)/CHUNK),end=Math.floor((d+FAR)/CHUNK);
-      // Include off-screen casters even at moonrise or sunset, when the
-      // highest trees on the hillside can project beyond an entire section.
-      const casterHeight=40;
-      const slopeZ=sun.z/sun.y, reachZ=casterHeight*Math.abs(slopeZ)+5;
-      const firstCaster=start-(slopeZ<0 ? Math.ceil(reachZ/CHUNK) : 1);
-      const lastCaster=end+(slopeZ>0 ? Math.ceil(reachZ/CHUNK) : 1);
-      for(let idx=firstCaster;idx<=lastCaster;idx++) {
-        if(!chunks.has(idx)) {
-          const tile=section(idx,s.lapBiomes);
-          const mesh=upload(tile);
-          mesh.movingActors=tile.movingActors;
-          mesh.bounds=sectionBounds(tile.data);
-          chunks.set(idx,mesh);
-        }
-      }
-      for(const [idx,mesh] of chunks) if(idx<firstCaster||idx>lastCaster) {
-        deleteMesh(mesh);chunks.delete(idx);
-      }
-      const actors=[];
-      for(const [idx,tile] of chunks) for(const actor of tile.movingActors) {
-        const pose=biomeActorPose(actor,t), model=biomeModelMesh(actor.model,actor.variant);
-        if(!animatedMeshes.has(model)) animatedMeshes.set(model,upload(model));
-        actors.push({casts:true,visible:idx>=start&&idx<=end,args:[animatedMeshes.get(model),
-          pose.x,pose.y,pose.z,pose.yaw,pose.roll,pose.pitch,pose.size,pose.size,pose.size]});
-      }
-      for(const o of s.objects||[]) {
-        if(!items[o.type]||o.z < -8||o.z>FAR) continue;
-        const z=d+o.z, x=roadX(z)+o.lane*LANE, a=Math.atan(roadSlope(z));
-        const pickup=o.type==='boost'||o.type==='repair'||o.type==='rocket';
-        actors.push({casts:o.type!=='oil'&&o.type!=='pothole',
-          args:[items[o.type],x,pickup?Math.sin(t*3+z*.06)*.12:0,z,a+(pickup?.29*Math.sin(t*2.5+z*.17):0)]});
-      }
-      const pose=coachPose(s,d),{x,y:busY,yaw:a,roll,pitch}=pose;
-      const rocket=rocketAttachment(s,bus,pose,d);
-      const impacts=[];
-      const coachArgs=[coaches.get(bus),x,busY,d,a,roll,pitch,1,1,1];
-      landingShadow(s,bus,(sx,sz,alpha)=>{
-        impacts.push({alpha,args:[items.jumpShade,x,.044,d,a,0,0,sx,1,sz]});
-      });
-      const bodyOpacity=coachOpacity(s,busOpacity);
-      if(bodyOpacity>=1) actors.push({casts:true,args:coachArgs});
-      else if(bodyOpacity>0) impacts.push({solid:true,alpha:bodyOpacity,shadowAlpha:busOpacity,args:coachArgs});
-      if(rocket) {
-        const {x,y,z}=rocket.nozzle;
-        actors.push({casts:true,args:[items.rocketMotor,x,y,z,a,roll,pitch]},
-          {casts:false,args:[items.rocketFlame,x,y,z,a,roll,pitch,rocket.width,rocket.width,rocket.length]});
-      }
-      impactParts(s,(type,x,y,z,yaw,roll,pitch,sx,sy,sz,alpha)=>{
-        impacts.push({solid:type==='cone'||type==='barrier',alpha,args:[items[type],x,y,z,yaw,roll,pitch,sx,sy,sz]});
-      });
-
-      function bounds(cx,cz,width,depth) {
-        // Snap to world texels to keep filtered edges still as the camera pans.
-        const tx=width/rawMap.width,tz=depth/rawMap.height;
-        return [Math.round(cx/tx)*tx-cam.cx,Math.round(cz/tz)*tz-cam.cz,1/width,1/depth];
-      }
-      const nearBounds=bounds(cam.cx+12*Math.sin(cam.a),cam.cz+12*Math.cos(cam.a),84,84);
-      function filterPass(source,target,dx,dz) {
-        gl.bindFramebuffer(gl.FRAMEBUFFER,target.framebuffer);
-        gl.viewport(0,0,target.width,target.height);
-        gl.bindTexture(gl.TEXTURE_2D,source.texture);
-        gl.uniform2f(filterUniform.stepUV,dx,dz);
-        gl.drawArrays(gl.TRIANGLES,0,3);
-      }
-      function renderMap(target,area,blurStep) {
-        gl.bindFramebuffer(gl.FRAMEBUFFER,rawMap.framebuffer);
-        gl.viewport(0,0,rawMap.width,rawMap.height);
-        gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
-        gl.enable(gl.DEPTH_TEST);
-        gl.useProgram(caster);
-        transformUniform=casterUniform;
-        gl.uniform2f(casterUniform.lightSlope,sun.x/sun.y,sun.z/sun.y);
-        gl.uniform1f(casterUniform.cameraHeight,cam.cy);
-        gl.uniform4fv(casterUniform.bounds,area);
-        gl.uniform1f(casterUniform.opacity,1);
-        const midZ=area[1]+cam.cz;
-        const reach=.5/area[3]+reachZ;
-        const first=Math.max(firstCaster,Math.floor((midZ-reach)/CHUNK));
-        const last=Math.min(lastCaster,Math.floor((midZ+reach)/CHUNK));
-        // The caster shader projects z to z - y * slopeZ. Allow a metre for raster / float rounding.
-        const halfDepth=.5/area[3]+1;
-        for(let i=first;i<=last;i++) {
-          const mesh=chunks.get(i), b=mesh.bounds, z=i*CHUNK-midZ;
-          const shift0=b.minY*slopeZ, shift1=b.maxY*slopeZ;
-          if(z+b.maxZ-Math.min(shift0,shift1)<-halfDepth || z+b.minZ-Math.max(shift0,shift1)>halfDepth) continue;
-          draw(mesh,0,0,i*CHUNK);
-        }
-        for(const actor of actors) if(actor.casts && Math.abs(actor.args[3]-midZ)<reach) draw(...actor.args);
-        for(const impact of impacts) if(impact.solid) {
-          gl.uniform1f(casterUniform.opacity,impact.shadowAlpha??impact.alpha);
-          draw(...impact.args);
-        }
-        // Only colour is sampled by the filters. The next shadow pass clears depth.
-        if(is2) gl.invalidateFramebuffer(gl.FRAMEBUFFER,transientShadowDepth);
-        gl.disable(gl.DEPTH_TEST);
-        gl.useProgram(filter);
-        bindMesh(screenTriangle);
-        filterPass(rawMap,blurMap,blurStep*area[2],0);
-        filterPass(blurMap,target,0,blurStep*area[3]);
-      }
-      gl.disable(gl.DITHER);
-      // The filter operates in metres, so dynamic screen resolution does not
-      // change the penumbra. A lower sun gives the longer shadows softer edges.
-      const blurStep=.23+.14*(1-sun.y);
-      renderMap(nearMap,nearBounds,blurStep);
-      // Distant features move by a fraction of a pixel between frames. Keep
-      // the light and world-space origin with their map until its next redraw.
-      if(!farSample || t<=farSample.t || t-farSample.t>=.10 || Math.abs(d-farSample.d)>3 ||
-          intro!==farSample.intro || Math.abs(sun.x/sun.y-farSample.sx)+Math.abs(slopeZ-farSample.sz)>.35) {
-        const sx=sun.x/sun.y,sz=sun.z/sun.y;
-        // Scenery lies within 75 m of the route's world axis. Fit its full
-        // projected height range and the visible route, including rear views
-        // in the opening orbit, so small roadside objects retain map texels.
-        const midZ=intro ? d : (cam.cz+d+FAR)*.5;
-        const spanZ=intro ? 2*(FAR+CHUNK) : d+FAR-cam.cz+CHUNK;
-        const centerHeight=casterHeight*.5;
-        const area=bounds(-centerHeight*sx,midZ-centerHeight*sz,
-          192+casterHeight*Math.abs(sx),spanZ+casterHeight*Math.abs(sz));
-        renderMap(farMap,area,.48);
-        farSample={t,d,intro,x:area[0]+cam.cx,z:area[1]+cam.cz,invX:area[2],invZ:area[3],sx,sz};
-      }
-      // Finish both shadow maps before opening the multisampled canvas render pass.
-      gl.bindFramebuffer(gl.FRAMEBUFFER,null);
-      gl.viewport(0,0,w,h);
-      gl.enable(gl.DITHER);
-      gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
-      gl.useProgram(sky);
-      transformUniform=uniform;
-      gl.uniform4f(skyUniform.discs,solar?solar[0]:0,solar?solar[1]:-10,lunar?lunar[0]:0,lunar?lunar[1]:-10);
-      gl.uniform1f(skyUniform.aspect,cam.aspect);
-      gl.uniform1f(skyUniform.horizonY,cam.f*Math.tan(cam.pitch));
-      gl.uniform1f(skyUniform.night,light.night);
-      gl.uniform3fv(skyUniform.horizonColor,light.horizon);
-      gl.uniform3fv(skyUniform.zenithColor,light.zenith);
-      gl.disable(gl.DEPTH_TEST);
-      bindMesh(screenTriangle);
-      gl.drawArrays(gl.TRIANGLES,0,3);
-      gl.useProgram(scene); gl.enable(gl.DEPTH_TEST);
-      gl.uniform4f(uniform.cameraAngles,Math.cos(cam.a),Math.sin(cam.a),Math.cos(cam.pitch),Math.sin(cam.pitch));
-      // Distant mountains form a backdrop behind the rolling ground.
-      gl.uniform3f(uniform.projection,cam.f/cam.aspect,cam.f,BEND_RATE*.64);
-      gl.uniform3fv(uniform.ambientTint,light.tint);
-      gl.uniform3fv(uniform.fogColor,light.fog);
-      gl.uniform1f(uniform.headlamps,0);
-      gl.uniform3f(uniform.rocketLight,0,0,0);
-      gl.uniform1f(uniform.opacity,1);
-      gl.uniform1f(uniform.shadowStrength,0);
-      if(skyline>0) draw(range,0,-15,d,0,0,0,1,skyline,1);
-      if(intro) {
-        // As the camera rises, move the lateral matte below the terrain so it
-        // joins the forward skyline without a cut on ultrawide views.
-        const settle=Math.max(0,2*s.introProgress-1);
-        const base=-15-84*settle*settle;
-        draw(range,0,base,d,Math.PI*.5);
-        draw(range,0,base,d,Math.PI);
-      }
-      if(skyline>0 || intro) gl.clear(gl.DEPTH_BUFFER_BIT);
-      gl.uniform3f(uniform.projection,cam.f/cam.aspect,cam.f,BEND_RATE);
-      gl.uniform1f(uniform.shadowStrength,light.shadow);
-      gl.uniform1f(uniform.headlamps,light.night*busOpacity);
-      gl.uniform3fv(uniform.headlamp,bus.headlamp);
-      gl.uniform3fv(uniform.taillamp,bus.taillamp);
-      if(rocket) gl.uniform3f(uniform.rocketLight,rocket.mountY,rocket.lightZ,rocket.power);
-      gl.uniform3f(uniform.coachOffset,x-cam.cx,busY-cam.cy,d-cam.cz);
-      gl.uniformMatrix3fv(uniform.coachFrame,false,transform(a,roll,pitch));
-      gl.uniform2f(uniform.lightSlope,sun.x/sun.y,sun.z/sun.y);
-      gl.uniform2f(uniform.farLightSlope,farSample.sx,farSample.sz);
-      gl.uniform1f(uniform.cameraHeight,cam.cy);
-      gl.uniform4fv(uniform.nearBounds,nearBounds);
-      gl.uniform4f(uniform.farBounds,farSample.x-cam.cx,farSample.z-cam.cz,farSample.invX,farSample.invZ);
-      gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,farMap.texture);
-      gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,nearMap.texture);
-      for(let i=start;i<=end;i++) draw(chunks.get(i),0,0,i*CHUNK);
-      if(s.boost) {
-        const behind=bus.taillamp[2]+.36+.16*Math.sin(t*16);
-        const z=behind*Math.cos(pitch);
-        draw(trail,x+z*Math.sin(a),busY+.085-behind*Math.sin(pitch),d+z*Math.cos(a),a,roll,pitch);
-      }
-      for(const actor of actors) if(actor.visible!==false) draw(...actor.args);
-      const chips=updateSpray(s);
-      if(chips.length) {
-        const mesh=new Mesh(), cos=Math.cos(cam.a), sin=Math.sin(cam.a);
-        for(const chip of chips) {
-          const [l,top,r,bottom]=chipCorners(chip,cos,sin,d);
-          mesh.tri(l,top,bottom,chip.color,chip.shade);
-          mesh.tri(top,r,bottom,chip.color,chip.shade*.80);
-        }
-        gl.bindBuffer(gl.ARRAY_BUFFER,sprayMesh.buf);
-        gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(mesh.data),gl.DYNAMIC_DRAW);
-        sprayMesh.n=mesh.data.length/6;
-        draw(sprayMesh,0,0,d);
-      }
-      if(impacts.length) {
-        gl.enable(gl.BLEND);
-        gl.blendFuncSeparate(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA,gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
-        gl.depthMask(false);
-        for(const {solid,alpha,args} of impacts) {
-          gl.uniform1f(uniform.opacity,alpha);
-          if(solid && alpha===1) gl.depthMask(true);
-          draw(...args,solid && alpha<1);
-          if(solid && alpha===1) gl.depthMask(false);
-        }
-        gl.depthMask(true);
-        gl.disable(gl.BLEND);
-      }
+      // The course advances along +Z. Keep its moving origin near the coach
+      // and reflect Z so the Three.js camera sees the same left and right lanes.
+      view.position.set(cam.cx,cam.cy,d-cam.cz);
+      view.rotation.set(-cam.pitch,-cam.a,0,'YXZ');
+      sky.update(cam,light);
+      lighting.update({light,cam,bus,pose,d,rocket,busOpacity,level:graphics.level});
+      objects.update(s,{d,t:s.time||0,cam,bus,pose,rocket,bodyOpacity:coachOpacity(s,busOpacity),light});
+      renderer.render(scene,view);
     }
-
-    function dispose(){
-      observe?.disconnect();
-      canvas.removeEventListener('webglcontextlost',lostHandler);
-      canvas.removeEventListener('webglcontextrestored',restoreHandler);
-      for(const mesh of [screenTriangle,sprayMesh,range,trail,...coaches.values(),...Object.values(items),...chunks.values(),...animatedMeshes.values()]) deleteMesh(mesh);
-      for(const target of [rawMap,blurMap,nearMap,farMap]) {
-        gl.deleteFramebuffer(target.framebuffer);
-        gl.deleteTexture(target.texture);
-        if(target.depth) gl.deleteRenderbuffer(target.depth);
-      }
-      for(const p of [sky,scene,caster,filter]) gl.deleteProgram(p);
+    function dispose() {
+      objects.dispose();
+      lighting.dispose();
+      sky.dispose();
+      renderer.dispose();
     }
-    return {render,dispose,renderer:is2?'WebGL 2':'WebGL'};
+    return {render,dispose};
+  }
+
+  function threeRenderer(canvas,context,graphics) {
+    let drivingScene=createDrivingScene(canvas,context,graphics);
+    function releaseScene() {
+      drivingScene?.dispose();
+      drivingScene=null;
+    }
+    function onContextLost(event) {
+      event.preventDefault();
+      // Retire the streamed buffers and VSM targets while their context is lost.
+      // Disposing old buffers after restoration would touch the new context.
+      releaseScene();
+    }
+    canvas.addEventListener('webglcontextlost',onContextLost);
+    return {
+      renderer:'Three.js (WebGL 2)',
+      render(state) {
+        if(context.isContextLost()) return;
+        drivingScene??=createDrivingScene(canvas,context,graphics);
+        drivingScene.render(state);
+      },
+      dispose() {
+        canvas.removeEventListener('webglcontextlost',onContextLost);
+        releaseScene();
+      }
+    };
   }
 
   // Software fallback projects the same bus and pickups. Simplified scenery keeps
   // the road playable on devices that cannot create a WebGL context.
-  function canvasRenderer(canvas, ctx) {
+  function canvasRenderer(canvas, ctx, graphics) {
     const updateSpray=shoulderSpray();
     const cars = new Map();
     const scenerySections = new Map();
     const terrainSections = new Map();
     const biomeShadows = new Map();
+    const openModelShadows = new Map();
     let cachedRoute;
     let cachedSignLap;
     const fadeCanvas = canvas.ownerDocument.createElement('canvas');
@@ -1335,6 +824,16 @@
     function boxCorners(rx,low,high,rz) {
       return [low,high].flatMap(y=>[[-rx,y,-rz],[rx,y,-rz],[rx,y,rz],[-rx,y,rz]]);
     }
+    // Paired points on the light disc keep the centre of the penumbra stable.
+    const lightDiscs=new Map([1,5,9,17].map(count=>{
+      const points=[[0,0]],pairs=(count-1)/2;
+      for(let i=0;i<pairs;i++) {
+        const radius=Math.sqrt((i+.75)/(pairs+.25)),angle=i*Math.PI*(3-Math.sqrt(5));
+        const x=radius*Math.cos(angle),y=radius*Math.sin(angle);
+        points.push([x,y],[-x,-y]);
+      }
+      return [count,points];
+    }));
     const shadowProfiles={
       cone:[...ring(.52,.04,.49),[0,1.15,0]],
       barrier:boxCorners(1.12,.05,1.28,.25),
@@ -1352,6 +851,12 @@
       shop:boxCorners(3.6,0,4.9,4.3),
       mairie:[...boxCorners(3.6,0,5.8,5.5),...boxCorners(1.3,6,9,1.3)],
       ecole:boxCorners(3.6,0,5.7,6.2)
+    };
+    // The narrow trunk and raised canopy cast distinct silhouettes in low sun.
+    const treeParts={
+      pine:[boxCorners(.045,0,.55,.05),shadowProfiles.pine.slice(1)],
+      broadleaf:[boxCorners(.045,0,.55,.05),[...ring(.17,.37,.17),...shadowProfiles.broadleaf.slice(1)]],
+      fir:[boxCorners(.026,0,.32,.026),shadowProfiles.fir.slice(1)]
     };
     function convexOutline(points) {
       points.sort((a,b)=>a[0]-b[0]||a[1]-b[1]);
@@ -1414,6 +919,25 @@
       });
       triangles.vertices=vertices;
       cars.set(key,triangles);
+      if(a.model==='bridgePortal') {
+        // The portal is open over the traffic lanes. Each connected piece
+        // of the original mesh supplies its own solid shadow silhouette.
+        const neighbors=vertices.map(()=>[]),seen=new Set(),parts=[];
+        for(const {indices:[a,b,c]} of triangles) {
+          neighbors[a].push(b,c);neighbors[b].push(a,c);neighbors[c].push(a,b);
+        }
+        for(let i=0;i<vertices.length;i++) {
+          if(seen.has(i)) continue;
+          const stack=[i],part=[];
+          while(stack.length) {
+            const j=stack.pop();
+            if(seen.has(j)) continue;
+            seen.add(j);part.push(vertices[j]);stack.push(...neighbors[j]);
+          }
+          parts.push(part);
+        }
+        openModelShadows.set(key,parts);
+      }
       // Support points on the actual hull keep shadows of skinny palms, wide
       // boats and towers distinct without projecting every triangle again.
       const hull=new Set();
@@ -1472,7 +996,9 @@
       return strips;
     }
     function render(s) {
-      const w=canvas.clientWidth||640,h=canvas.clientHeight||400;
+      const scale=graphics.resolutionScale, level=graphics.level;
+      const w=Math.max(1,Math.round((canvas.clientWidth||640)*scale));
+      const h=Math.max(1,Math.round((canvas.clientHeight||400)*scale));
       if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}
       const lapBiomes=s.lapBiomes;
       if(cachedRoute!==lapBiomes) {
@@ -1591,7 +1117,9 @@
       function litColor(col,fog=0,lamp=0,emission=null) {
         const warm=[1,.87,.62];
         const channels=col.map((base,i)=>{
-          let lit=base*(light.tint[i]+warm[i]*lamp);
+          const sunlight=level.lighting*(1-light.night);
+          let lit=base*(light.tint[i]+warm[i]*(lamp*(1+.12*level.lighting))+
+            sunlight*(i===0?.105:i===1?.065:.025));
           if(emission) lit+=(emission[i]-lit)*light.night;
           return Math.min(255,Math.round(255*(lit*(1-fog)+light.fog[i]*fog)));
         });
@@ -1767,9 +1295,9 @@
       function drawHeadlightBeams() {
         // Trace equal-intensity contours of each beam onto the same ground as
         // the shadows. The two pools meet as they open up down the road.
-        const layers=20;
+        const layers=Math.round(20*level.shadowLayers);
         ctx.fillStyle='#f7dc9c';
-        ctx.globalAlpha=light.night*busOpacity*.40/layers;
+        ctx.globalAlpha=light.night*busOpacity*(.40+.12*level.lighting)/layers;
         for(const side of [-1,1]) {
           const slices=[];
           for(let step=0;step<=32;step++) {
@@ -1813,7 +1341,8 @@
           const y=ly*ct-lz*st,z=ly*st+lz*ct,x=side*lx*cr-y*sr;
           const p=point(a.x+x*lampCos+z*lampSin,a.y+side*lx*sr+y*cr,a.z-x*lampSin+z*lampCos);
           if(p[2]<.25) continue;
-          const radius=(front?.34:.23)*focal/p[2],glow=ctx.createRadialGradient(p[0],p[1],0,p[0],p[1],radius);
+          const radius=(front?.34:.23)*focal/p[2];
+          const glow=ctx.createRadialGradient(p[0],p[1],0,p[0],p[1],radius);
           glow.addColorStop(0,front?'rgba(255,251,212,.9)':'rgba(255,63,29,.85)');
           glow.addColorStop(.38,front?'rgba(255,226,153,.35)':'rgba(255,44,20,.35)');
           glow.addColorStop(1,front?'rgba(255,212,130,0)':'rgba(255,44,20,0)');
@@ -2001,6 +1530,9 @@
       for(const a of actors) if(a.ground) drawSolid(a);
 
       const rayX=-sun.x/sunHeight,rayZ=-sun.z/sunHeight;
+      const rayLength=Math.hypot(rayX,rayZ),sunX=rayLength?rayX/rayLength:0,sunZ=rayLength?rayZ/rayLength:1;
+      const rayStep=4/Math.max(1,rayLength);
+      const angularRadius=.019,sideSpread=angularRadius/sunHeight,alongSpread=sideSpread/sunHeight;
       // Find where the light ray meets the meadow, including shadows stretching
       // from an elevated bank across the flat road.
       function land(x,y,z) {
@@ -2013,6 +1545,79 @@
         return [x+rayX*fall,z+rayZ*fall];
       }
       function groundClearance(p) { return crestAt(p[0],ridgeBefore(p[3]))+.4-p[1]; }
+      function areaShadowContour(outline) {
+        // Trace the boundary in the light's plane before it meets the receiver.
+        // Subdividing after landing would shortcut banks crossed by long shadows.
+        const rim=[],bounds=[],spacing=level===graphicsLevels.extreme?2:3;
+        let maxScreenSpread=0,aboveSurface=false;
+        for(let i=0;i<outline.length;i++) {
+          const [u,v,y]=outline[i],[nu,nv,ny]=outline[(i+1)%outline.length];
+          const steps=Math.max(1,Math.ceil(Math.hypot(nu-u,nv-v)/spacing));
+          for(let k=0;k<steps;k++) {
+            const t=k/steps,top=y+t*(ny-y);
+            const x=u+t*(nu-u)-rayX*top,z=v+t*(nv-v)-rayZ*top;
+            // Advance at most one terrain cell along the ray, stopping at the
+            // first bank or bridge deck. Interpolate the last crossing.
+            let drop=0,gap=top-receiverHeight(x,z);
+            while(gap>.015) {
+              const step=Math.min(gap,rayStep),next=drop+step;
+              const nextGap=top-next-receiverHeight(x+rayX*next,z+rayZ*next);
+              if(nextGap<0) {
+                const hit=drop+step*gap/(gap-nextGap);
+                const error=top-hit-receiverHeight(x+rayX*hit,z+rayZ*hit);
+                if(Math.abs(error)<.08) drop=hit;
+                else {
+                  // Refine discontinuities such as the step from water to the deck.
+                  let low=drop,high=next;
+                  for(let j=0;j<5;j++) {
+                    const mid=(low+high)*.5;
+                    if(top-mid>receiverHeight(x+rayX*mid,z+rayZ*mid)) low=mid;
+                    else high=mid;
+                  }
+                  drop=high;
+                }
+                break;
+              }
+              drop=next;gap=nextGap;
+            }
+            const px=x+rayX*drop,pz=z+rayZ*drop;
+            const ground=receiverHeight(px,pz),vertex=[px,ground,pz,drop],screen=point(...vertex);
+            if(top>=ground-.02) aboveSurface=true;
+            // Along-ray softness can be strongly foreshortened at sunset.
+            // Use its projected extent to spend extra samples only where visible.
+            const sx=px+drop*alongSpread*sunX,sz=pz+drop*alongSpread*sunZ;
+            const edge=point(sx,receiverHeight(sx,sz),sz);
+            maxScreenSpread=Math.max(maxScreenSpread,drop*sideSpread*focal/Math.max(1,screen[2]),
+              Math.hypot(edge[0]-screen[0],edge[1]-screen[1]));
+            rim.push(vertex);bounds.push(screen);
+          }
+        }
+        const pad=maxScreenSpread+2;
+        if(!aboveSurface || bounds.every(p=>p[2]<=.25) || bounds.every(p=>p[2]>.25) &&
+          (bounds.every(p=>p[0]<-pad)||bounds.every(p=>p[0]>w+pad)||bounds.every(p=>p[1]>h+pad)||
+           bounds.every(p=>groundClearance(p)<-pad))) return null;
+        return {rim,bounds,maxScreenSpread};
+      }
+      function drawAreaShadow(outlines,opacity) {
+        const contours=outlines.map(areaShadowContour).filter(Boolean);
+        if(!contours.length) return;
+        const spread=Math.max(...contours.map(p=>p.maxScreenSpread))*Math.sqrt(light.shadow);
+        const count=spread<.55?1:spread<2?5:spread>5 && opacity>.33 && level===graphicsLevels.extreme?17:9;
+        ctx.globalAlpha=1-Math.exp(-2*opacity/(Math.PI*count));
+        for(const [across,along] of lightDiscs.get(count)) {
+          const dx=across*sideSpread*sunZ+along*alongSpread*sunX;
+          const dz=-across*sideSpread*sunX+along*alongSpread*sunZ;
+          ctx.beginPath();
+          for(const {rim,bounds} of contours) {
+            if(dx===0 && dz===0) appendGroundPath(rim,groundClearance,ctx,bounds);
+            else appendGroundPath(rim.map(([x,,z,drop])=>{
+              x+=dx*drop;z+=dz*drop;
+              return [x,receiverHeight(x,z),z];
+            }),groundClearance);
+          }
+          ctx.fill();
+        }
+      }
       function drawShadow(a,profile) {
         if(a.forward < -casterMargin || a.forward>FAR+casterMargin) return;
         if(a.type==='fir' || a.type==='biomeModel') {
@@ -2022,18 +1627,27 @@
         }
         const yaw=a.yaw||0,roll=a.roll||0,pitch=a.pitch||0;
         const cy=Math.cos(yaw),sy=Math.sin(yaw),cr=Math.cos(roll),sr=Math.sin(roll),ct=Math.cos(pitch),st=Math.sin(pitch);
-        const outline=convexOutline(profile.map(([vx,vy,vz])=>{
+        const areaLight=level===graphicsLevels.high || level===graphicsLevels.extreme;
+        function projectProfile([vx,vy,vz]) {
           const x=vx*(a.size||a.sx||1), y=vy*(a.size||a.sy||1), z=vz*(a.size||a.sz||1);
           const py=y*ct-z*st,pz=y*st+z*ct,px=x*cr-py*sr;
-          return land(a.x+px*cy+pz*sy,a.y+x*sr+py*cr,a.z-px*sy+pz*cy);
-        }));
+          const wx=a.x+px*cy+pz*sy,wy=a.y+x*sr+py*cr,wz=a.z-px*sy+pz*cy;
+          return areaLight?[wx+rayX*wy,wz+rayZ*wy,wy]:land(wx,wy,wz);
+        }
+        const opacity=light.shadow*(a.type==='bus'?busOpacity:a.alpha??1)*(.72-.32*Math.min(1,Math.max(0,a.forward)/FAR));
+        if(areaLight) {
+          const parts=treeParts[a.type] || (a.model==='bridgePortal' && openModelShadows.get(cachedBiomeModel(a))) || [profile];
+          drawAreaShadow(parts.map(part=>convexOutline(part.map(projectProfile))).filter(hull=>hull.length>=3),opacity);
+          return;
+        }
+        const outline=convexOutline(profile.map(projectProfile));
         if(outline.length<3) return;
         let mx=0,mz=0;
         const rim=[];
         for(let i=0;i<outline.length;i++) {
           const [x,z]=outline[i], [nx,nz]=outline[(i+1)%outline.length];
           mx+=x;mz+=z;
-          const steps=Math.ceil(Math.hypot(nx-x,nz-z)/4);
+          const steps=Math.ceil(Math.hypot(nx-x,nz-z)*level.shadowLayers/4);
           for(let k=0;k<steps;k++) {
             const px=x+(nx-x)*k/steps,pz=z+(nz-z)*k/steps;
             rim.push([px,pz]);
@@ -2052,9 +1666,8 @@
           (screen.every(p=>p[0]<-3*blur)||screen.every(p=>p[0]>w+3*blur)||screen.every(p=>p[1]>h+3*blur)||screen.every(p=>groundClearance(p)<-1)))) return;
         // Drape nested contours on the terrain. A smooth opacity ramp and
         // extra samples for large shadows keep the foreground feathered.
-        const opacity=light.shadow*(a.type==='bus'?busOpacity:a.alpha??1)*(.72-.32*Math.min(1,Math.max(0,a.forward)/FAR));
         const maxLayers=a.type==='fir' || a.type==='biomeModel'?8:36;
-        const layers=Math.max(6,Math.min(maxLayers,Math.ceil(2*blur)));
+        const layers=Math.max(3,Math.round(Math.max(6,Math.min(maxLayers,Math.ceil(2*blur)))*level.shadowLayers));
         for(let i=0;i<layers;i++) {
           ctx.globalAlpha=opacity*Math.sin(Math.PI*(i+.5)/layers)/layers;
           ctx.beginPath();
@@ -2134,14 +1747,19 @@
   }
 
   window.BusWorld = {
-    init(canvas) {
+    init(canvas,preferences) {
+      const graphics={level:graphicsLevels.medium,resolutionScale:1};
+      function setGraphicsSettings(settings={}) {
+        if(Object.hasOwn(graphicsLevels,settings.detail)) graphics.level=graphicsLevels[settings.detail];
+        if(settings.resolutionScale===1 || settings.resolutionScale===2) graphics.resolutionScale=settings.resolutionScale;
+      }
+      setGraphicsSettings(preferences);
       const options={antialias:true,depth:true,stencil:false,preserveDrawingBuffer:false};
-      const gl2=canvas.getContext('webgl2',options);
-      const gl=gl2||canvas.getContext('webgl',options);
-      if(gl) return gpuRenderer(canvas,gl,Boolean(gl2));
+      const context=window.THREE && canvas.getContext('webgl2',options);
+      if(context) return {...threeRenderer(canvas,context,graphics),setGraphicsSettings};
       const ctx=canvas.getContext('2d',{alpha:false});
       if(!ctx) throw Error('Le navigateur ne peut pas créer de surface de dessin.');
-      return canvasRenderer(canvas,ctx);
+      return {...canvasRenderer(canvas,ctx,graphics),setGraphicsSettings};
     }
   };
 })();
