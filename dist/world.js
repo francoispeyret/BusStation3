@@ -107,7 +107,6 @@
 
   function tree(m,x,z,size,kind,r) {
     const s=size;
-    m.ellipse(x-s*.30,.012,z-s*.15,s*.60,s*.29,'#8e9d58',9);
     m.box(x,0,z,s*.09,s*.55,s*.11,'#866b49');
     if(kind===0) {
       const col = r()<.5 ? '#48765a' : '#53795c';
@@ -136,7 +135,7 @@
   function section(index) {
     const m=new Mesh(), start=index*CHUNK, r=random(index+843);
     // Cache the slope once per streamed section. One extra row on each end
-    // also grounds trees whose branches or shadows cross the section seam.
+    // also grounds trees whose branches cross the section seam.
     const rows = Array.from({length:CHUNK/4+3}, (_,i) => {
       const z=(i-1)*4, worldZ=start+z;
       return {x:roadX(worldZ), heights:meadowBands.map(x => meadowRise(x,worldZ))};
@@ -206,8 +205,8 @@
       m.box(x+.1,0,z+2.6,1.9,.16,.51,'#b77e53');
       m.box(x+.1,.17,z+2.82,1.9,.43,.11,'#cb9770');
     }
-    // Match the same two grass triangles used above so tree roots, shadows
-    // and rocks sit on the hillside, even between grid vertices.
+    // Match the same two grass triangles used above so roots and rocks sit
+    // on the hillside, even between grid vertices.
     for (let i=firstProp;i<m.data.length;i+=6) {
       const x=m.data[i], z=m.data[i+2], cell=Math.floor(z/4), v=z/4-cell;
       const a=rows[cell+1], b=rows[cell+2];
@@ -557,6 +556,84 @@
     return .032*Math.sin(state.stopProgress*Math.PI*1.28)*(1-state.stopProgress);
   }
 
+  // One daylight cycle takes three minutes of game time. The sun stays above
+  // the horizon so the road remains readable throughout an endless run.
+  function sunlight(time) {
+    const phase=TAU*(time%180)/180;
+    const elevation=(35-23*Math.cos(phase+.45))*Math.PI/180;
+    const azimuth=2.78-phase, horizontal=Math.cos(elevation);
+    return {x:horizontal*Math.sin(azimuth),y:Math.sin(elevation),z:horizontal*Math.cos(azimuth)};
+  }
+
+  function projectSun(sun,cam) {
+    const ca=Math.cos(cam.a), sa=Math.sin(cam.a), cp=Math.cos(cam.pitch), sp=Math.sin(cam.pitch);
+    const forward=sun.x*sa+sun.z*ca, depth=forward*cp-sun.y*sp;
+    if(depth<=.05) return null;
+    return [cam.f*(sun.x*ca-sun.z*sa)/(cam.aspect*depth),cam.f*(sun.y*cp+forward*sp)/depth];
+  }
+
+  // A light ray keeps xz - y * sun.xz / sun.y constant. Using its ground
+  // intersection as the map coordinate keeps both cascades aligned to the road.
+  // Work relative to the camera, before applying the curved-horizon effect.
+  const lightCoordinates = `
+    uniform vec2 lightSlope;
+    uniform float cameraHeight;
+    vec3 lightPoint(vec3 relative) {
+      float height = relative.y + cameraHeight;
+      return vec3(relative.xz - height * lightSlope, (height + 4.0) / 28.0);
+    }`;
+  const momentPacking = `
+    vec4 packMoments(vec2 v) {
+      vec2 scaled = clamp(v, 0.0, 1.0) * 255.0;
+      return vec4(floor(scaled)/255.0, fract(scaled));
+    }
+    vec2 moments(vec4 value) { return value.rg + value.ba / 255.0; }`;
+  const shaderPrecision = `
+    #ifdef GL_FRAGMENT_PRECISION_HIGH
+    precision highp float;
+    #else
+    precision mediump float;
+    #endif
+  `;
+  const casterVertex = `
+    attribute vec3 aPos;
+    uniform vec3 offset;
+    uniform mat3 model;
+    uniform vec4 bounds;
+    ${lightCoordinates}
+    varying mediump float height;
+    void main() {
+      vec3 p = lightPoint(offset + model * aPos);
+      height = p.z;
+      gl_Position = vec4((p.xy - bounds.xy) * bounds.zw * 2.0, 1.0 - 2.0*p.z, 1.);
+    }`;
+  const casterFragment = `${shaderPrecision}
+    varying mediump float height;
+    uniform float opacity;
+    ${momentPacking}
+    void main() {
+      // A dissolving collision object gradually stops blocking the sun.
+      // Stable screen-door coverage becomes continuous after the spatial filter.
+      if (opacity < 1.0 && fract(dot(mod(floor(gl_FragCoord.xy), 4.0),
+          vec2(.3125,.25))) >= opacity) discard;
+      gl_FragColor = packMoments(vec2(height, height*height));
+    }`;
+  const filterVertex = `attribute vec2 aPos; varying mediump vec2 uv;
+    void main(){uv=aPos*.5+.5;gl_Position=vec4(aPos,0.,1.);}`;
+  const filterFragment = `${shaderPrecision}
+    varying mediump vec2 uv;
+    uniform mediump sampler2D source;
+    uniform vec2 stepUV;
+    ${momentPacking}
+    void main() {
+      vec2 m = .227027 * moments(texture2D(source,uv));
+      m += .316216 * (moments(texture2D(source,uv-1.384615*stepUV))
+                    + moments(texture2D(source,uv+1.384615*stepUV)));
+      m += .070270 * (moments(texture2D(source,uv-3.230769*stepUV))
+                    + moments(texture2D(source,uv+3.230769*stepUV)));
+      gl_FragColor = packMoments(m);
+    }`;
+
   const vertexCode = `
     attribute vec3 aPos;
     attribute vec3 aColor;
@@ -566,8 +643,19 @@
     uniform vec3 projection;
     uniform float lighting;
     varying lowp vec3 color;
+    ${lightCoordinates}
+    uniform vec4 nearBounds, farBounds;
+    uniform vec2 farLightSlope;
+    varying mediump vec4 shadowUV;
+    varying mediump float receiverHeight;
+    varying lowp float shadowVisibility;
     void main() {
       vec3 w = offset + model * aPos;
+      vec3 light = lightPoint(w);
+      vec2 farPoint = w.xz - (w.y + cameraHeight)*farLightSlope;
+      shadowUV = vec4((light.xy - nearBounds.xy)*nearBounds.zw,
+                      (farPoint - farBounds.xy)*farBounds.zw) + .5;
+      receiverHeight = light.z;
       float forward = w.x*cameraAngles.y + w.z*cameraAngles.x;
       float beyond = max(0.0, forward - ${BEND_START.toFixed(1)});
       w.y -= projection.z * beyond * beyond;
@@ -576,10 +664,39 @@
       float depth = forward*cameraAngles.z - w.y*cameraAngles.w;
       gl_Position = vec4(viewX*projection.x,viewY*projection.y,depth*1.0018 - .56, depth);
       float fog = smoothstep(55.0,255.0,forward)*.48;
+      shadowVisibility = 1.0-fog;
       color = mix(aColor*lighting,vec3(.91,.77,.67),fog);
     }`;
-  const fragmentCode=`precision mediump float; varying lowp vec3 color; uniform lowp float opacity;
-    void main(){gl_FragColor=vec4(color,opacity);}`;
+  const fragmentCode=`${shaderPrecision}
+    varying lowp vec3 color;
+    uniform lowp float opacity, shadowStrength;
+    uniform mediump sampler2D nearShadow, farShadow;
+    varying mediump vec4 shadowUV;
+    varying mediump float receiverHeight;
+    varying lowp float shadowVisibility;
+    ${momentPacking}
+    float edge(vec2 uv) {
+      vec2 halfUV = abs(uv-.5);
+      return max(halfUV.x,halfUV.y);
+    }
+    float occlusion(vec4 sampleValue, float bias) {
+      vec2 m = moments(sampleValue);
+      // Scale before squaring to retain small offsets on mediump-only GPUs.
+      float delta = max(0., m.x - receiverHeight - bias) * 16.;
+      if (delta<=0.) return 0.;
+      float variance = max(.0046, (m.y*16. - m.x*(m.x*16.))*16.);
+      return delta*delta / (delta*delta + variance);
+    }
+    void main(){
+      float shade=0.;
+      if (shadowStrength>0.) {
+        float blend=smoothstep(.34,.47,edge(shadowUV.xy));
+        if (blend<1.) shade=(1.-blend)*occlusion(texture2D(nearShadow,shadowUV.xy),.0007);
+        if (blend>0.) shade+=blend*(1.-smoothstep(.46,.495,edge(shadowUV.zw)))
+          *occlusion(texture2D(farShadow,shadowUV.zw),.0015);
+      }
+      gl_FragColor=vec4(color*mix(vec3(1.),vec3(.58,.64,.72),shade*shadowStrength*shadowVisibility),opacity);
+    }`;
   const skyVertex=`attribute vec2 aPos; varying lowp float altitude;
     varying mediump vec2 uv; void main(){altitude=aPos.y;uv=aPos;gl_Position=vec4(aPos,0.,1.);}`;
   const skyFragment=`precision mediump float; varying lowp float altitude;
@@ -596,6 +713,7 @@
     const compile=(type,src) => {
       if(is2) {
         src=src.replace(/\battribute\b/g,'in').replace(/\bvarying\b/g,type===gl.VERTEX_SHADER?'out':'in');
+        src=src.replace(/\btexture2D\b/g,'texture');
         if(type===gl.FRAGMENT_SHADER) src=src.replace('void main()', 'out lowp vec4 result; void main()').replace('gl_FragColor','result');
         src='#version 300 es\n'+src;
       }
@@ -613,9 +731,31 @@
   }
 
   function gpuRenderer(canvas,gl,is2) {
-    let scene,sky,uniform,skySun,skyAspect,skyBuffer,coach,shadow,trail,range,items, lost=false;
+    let scene,sky,uniform,skySun,skyAspect,skyBuffer,coach,trail,range,items, lost=false;
+    let caster,filter,casterUniform,filterUniform,rawMap,blurMap,nearMap,farMap;
+    let farSample=null;
     const chunks=new Map();
     const modelMatrix=new Float32Array(9);
+    const locations=(p,names)=>Object.fromEntries(names.map(n=>[n,gl.getUniformLocation(p,n)]));
+    function shadowTarget(width,height,withDepth=false) {
+      const texture=gl.createTexture(), framebuffer=gl.createFramebuffer();
+      gl.bindTexture(gl.TEXTURE_2D,texture);
+      gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,width,height,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+      gl.bindFramebuffer(gl.FRAMEBUFFER,framebuffer);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,texture,0);
+      let depth=null;
+      if(withDepth) {
+        depth=gl.createRenderbuffer();
+        gl.bindRenderbuffer(gl.RENDERBUFFER,depth);
+        gl.renderbufferStorage(gl.RENDERBUFFER,gl.DEPTH_COMPONENT16,width,height);
+        gl.framebufferRenderbuffer(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.RENDERBUFFER,depth);
+      }
+      return {texture,framebuffer,depth,width,height};
+    }
     function upload(model) {
       const b=gl.createBuffer();
       gl.bindBuffer(gl.ARRAY_BUFFER,b);
@@ -625,15 +765,30 @@
     function prepare() {
       scene=program(gl,is2,vertexCode,fragmentCode);
       sky=program(gl,is2,skyVertex,skyFragment);
+      caster=program(gl,is2,casterVertex,casterFragment);
+      filter=program(gl,is2,filterVertex,filterFragment);
       skySun=gl.getUniformLocation(sky,'sun');skyAspect=gl.getUniformLocation(sky,'aspect');
-      uniform=Object.fromEntries(['offset','model','cameraAngles','projection','lighting','opacity'].map(n=>[n,gl.getUniformLocation(scene,n)]));
+      uniform=locations(scene,['offset','model','cameraAngles','projection','lighting','opacity',
+        'shadowStrength','lightSlope','farLightSlope','cameraHeight','nearBounds','farBounds','nearShadow','farShadow']);
+      casterUniform=locations(caster,['offset','model','lightSlope','cameraHeight','bounds','opacity']);
+      filterUniform=locations(filter,['source','stepUV']);
+      const limit=Math.min(gl.getParameter(gl.MAX_TEXTURE_SIZE),gl.getParameter(gl.MAX_RENDERBUFFER_SIZE));
+      const width=Math.min(512,limit),height=Math.min(640,limit);
+      rawMap=shadowTarget(width,height,true);
+      blurMap=shadowTarget(width/2,height/2);
+      nearMap=shadowTarget(width/2,height/2);
+      farMap=shadowTarget(width/2,height/2);
+      gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+      gl.useProgram(scene);
+      gl.uniform1i(uniform.nearShadow,0);
+      gl.uniform1i(uniform.farShadow,1);
+      gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,farMap.texture);
+      gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,nearMap.texture);
       skyBuffer=gl.createBuffer();
       gl.bindBuffer(gl.ARRAY_BUFFER,skyBuffer);
       gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
       coach=upload(bus());
       range=upload(backdrop());
-      const shade=new Mesh(); shade.ellipse(0,0,0,1.43,2.91,'#414c55',18);
-      shadow=upload(shade);
       const streak=new Mesh();
       for(const side of [-1,1]) for (const [x,l] of [[.94,1.5],[1.09,.88]]) {
         streak.tri([side*(x-.038),0,-2.30],[side*(x+.038),0,-2.30],[side*x,0,-2.30-l],'#ffcc66');
@@ -644,6 +799,7 @@
       gl.enable(gl.DEPTH_TEST);
       gl.disable(gl.CULL_FACE);
       chunks.clear();
+      farSample=null;
     }
     prepare();
     const lostHandler=e=>{e.preventDefault();lost=true;};
@@ -673,7 +829,9 @@
       gl.clear(gl.DEPTH_BUFFER_BIT);
       gl.useProgram(sky);
       const d=s.roadZ ?? s.distance ?? 0, t=s.time||0, lane=s.laneX||0, cam=camera(s,w/h);
-      gl.uniform2f(skySun,(.86-roadSlope(d)*1.4)/(w/h),.99);gl.uniform1f(skyAspect,w/h);
+      const sun=sunlight(t);
+      const disc=projectSun(sun,cam);
+      gl.uniform2f(skySun,disc ? disc[0] : 0,disc ? disc[1] : -10);gl.uniform1f(skyAspect,w/h);
       gl.disable(gl.DEPTH_TEST); gl.disableVertexAttribArray(1);
       gl.enableVertexAttribArray(0); gl.bindBuffer(gl.ARRAY_BUFFER,skyBuffer);
       gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0); gl.drawArrays(gl.TRIANGLES,0,3);
@@ -683,17 +841,19 @@
       gl.uniform3f(uniform.projection,cam.f/cam.aspect,cam.f,BEND_RATE*.64);
       gl.uniform1f(uniform.lighting,1);
       gl.uniform1f(uniform.opacity,1);
+      gl.uniform1f(uniform.shadowStrength,0);
+      let transformUniform=uniform;
       function draw(mesh,x,y,z,a=0,roll=0,pitch=0,sx=1,sy=1,sz=1,fadeSolid=false) {
         const cy=Math.cos(a), sn=Math.sin(a), cr=Math.cos(roll), sr=Math.sin(roll);
         const cp=Math.cos(pitch), sp=Math.sin(pitch);
         modelMatrix[0]=cy*cr*sx; modelMatrix[1]=sr*sx; modelMatrix[2]=-sn*cr*sx;
         modelMatrix[3]=(sn*sp-cy*sr*cp)*sy; modelMatrix[4]=cr*cp*sy; modelMatrix[5]=(sn*sr*cp+cy*sp)*sy;
         modelMatrix[6]=(sn*cp+cy*sr*sp)*sz; modelMatrix[7]=-cr*sp*sz; modelMatrix[8]=(cy*cp-sn*sr*sp)*sz;
-        gl.uniformMatrix3fv(uniform.model,false,modelMatrix);
-        gl.uniform3f(uniform.offset,x-cam.cx,y-cam.cy,z-cam.cz);
+        gl.uniformMatrix3fv(transformUniform.model,false,modelMatrix);
+        gl.uniform3f(transformUniform.offset,x-cam.cx,y-cam.cy,z-cam.cz);
         gl.bindBuffer(gl.ARRAY_BUFFER,mesh.buf);
         gl.vertexAttribPointer(0,3,gl.FLOAT,false,24,0);
-        gl.vertexAttribPointer(1,3,gl.FLOAT,false,24,12);
+        if(transformUniform===uniform) gl.vertexAttribPointer(1,3,gl.FLOAT,false,24,12);
         // Fade the exterior silhouette without accumulating alpha on hidden interior faces.
         if(fadeSolid) {
           gl.colorMask(false,false,false,false);
@@ -719,37 +879,122 @@
       gl.clear(gl.DEPTH_BUFFER_BIT);
       gl.uniform3f(uniform.projection,cam.f/cam.aspect,cam.f,BEND_RATE);
       const start=Math.floor((intro ? d-FAR : cam.cz-5)/CHUNK),end=Math.floor((d+FAR)/CHUNK);
-      for(let idx=start;idx<=end;idx++) {
+      // One extra section on each side supplies off-screen casters at low sun.
+      for(let idx=start-1;idx<=end+1;idx++) {
         if(!chunks.has(idx)) chunks.set(idx,upload(section(idx)));
-        draw(chunks.get(idx),0,0,idx*CHUNK);
       }
       for(const [idx,mesh] of chunks) if(idx<start-1||idx>end+1) {
         gl.deleteBuffer(mesh.buf);chunks.delete(idx);
       }
+      const actors=[];
       for(const o of s.objects||[]) {
         if(!items[o.type]||o.z < -8||o.z>FAR) continue;
         const z=d+o.z, x=roadX(z)+o.lane*LANE, a=Math.atan(roadSlope(z));
         const pickup=o.type==='boost'||o.type==='repair';
-        draw(items[o.type],x,pickup?Math.sin(t*3+z*.06)*.12:0,z,a+(pickup?.29*Math.sin(t*2.5+z*.17):0));
+        actors.push({casts:o.type!=='oil'&&o.type!=='pothole',
+          args:[items[o.type],x,pickup?Math.sin(t*3+z*.06)*.12:0,z,a+(pickup?.29*Math.sin(t*2.5+z*.17):0)]});
       }
       const x=roadX(d)+lane*LANE;
       const a=Math.atan(roadSlope(d))+(s.heading||0);
       const speed=Math.min(1,(s.speed||0)/70);
       const roll=(s.steer||0)*.072+(s.flat?.044+Math.sin(d*1.6)*.013:0)+(s.hit ? Math.sin(t*26)*.035*speed:0);
-      draw(shadow,x+.13,.018,d+.12,a);
+      actors.push({casts:true,args:[coach,x,.035+Math.sin(d*1.05)*speed*.018+(s.flat?0:Math.cos(d*.73)*.008),
+        d,a,roll,brakingPitch(s)]});
+      const impacts=[];
+      impactParts(s,(type,x,y,z,yaw,roll,pitch,sx,sy,sz,alpha)=>{
+        impacts.push({solid:type==='cone'||type==='barrier',alpha,args:[items[type],x,y,z,yaw,roll,pitch,sx,sy,sz]});
+      });
+
+      function bounds(cx,cz,width,depth) {
+        // Snap to world texels to keep filtered edges still as the camera pans.
+        const tx=width/rawMap.width,tz=depth/rawMap.height;
+        return [Math.round(cx/tx)*tx-cam.cx,Math.round(cz/tz)*tz-cam.cz,1/width,1/depth];
+      }
+      const nearBounds=bounds(cam.cx+12*Math.sin(cam.a),cam.cz+12*Math.cos(cam.a),84,84);
+      function filterPass(source,target,dx,dz) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER,target.framebuffer);
+        gl.viewport(0,0,target.width,target.height);
+        gl.bindTexture(gl.TEXTURE_2D,source.texture);
+        gl.uniform2f(filterUniform.stepUV,dx,dz);
+        gl.drawArrays(gl.TRIANGLES,0,3);
+      }
+      function renderMap(target,area,blurStep) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER,rawMap.framebuffer);
+        gl.viewport(0,0,rawMap.width,rawMap.height);
+        gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+        gl.enable(gl.DEPTH_TEST);
+        gl.useProgram(caster);
+        transformUniform=casterUniform;
+        gl.uniform2f(casterUniform.lightSlope,sun.x/sun.y,sun.z/sun.y);
+        gl.uniform1f(casterUniform.cameraHeight,cam.cy);
+        gl.uniform4fv(casterUniform.bounds,area);
+        gl.uniform1f(casterUniform.opacity,1);
+        const midZ=area[1]+cam.cz;
+        // The highest trees reach under 18 m, including their hillside.
+        const reach=.5/area[3]+18*Math.abs(sun.z/sun.y)+5;
+        const first=Math.max(start-1,Math.floor((midZ-reach)/CHUNK));
+        const last=Math.min(end+1,Math.floor((midZ+reach)/CHUNK));
+        for(let i=first;i<=last;i++) draw(chunks.get(i),0,0,i*CHUNK);
+        for(const actor of actors) if(actor.casts && Math.abs(actor.args[3]-midZ)<reach) draw(...actor.args);
+        for(const impact of impacts) if(impact.solid) {
+          gl.uniform1f(casterUniform.opacity,impact.alpha);
+          draw(...impact.args);
+        }
+        gl.disable(gl.DEPTH_TEST);
+        gl.useProgram(filter);
+        gl.bindBuffer(gl.ARRAY_BUFFER,skyBuffer);
+        gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
+        gl.uniform1i(filterUniform.source,0);
+        filterPass(rawMap,blurMap,blurStep*area[2],0);
+        filterPass(blurMap,target,0,blurStep*area[3]);
+      }
+      gl.disableVertexAttribArray(1);
+      gl.disable(gl.DITHER);
+      // The filter operates in metres, so dynamic screen resolution does not
+      // change the penumbra. A lower sun gives the longer shadows softer edges.
+      const blurStep=.23+.14*(1-sun.y);
+      renderMap(nearMap,nearBounds,blurStep);
+      // Distant features move by a fraction of a pixel between frames. Keep
+      // the light and world-space origin with their map until its next redraw.
+      if(!farSample || t<=farSample.t || t-farSample.t>=.10 ||
+          Math.abs(d-farSample.d)>3 || intro!==farSample.intro) {
+        const sx=sun.x/sun.y,sz=sun.z/sun.y;
+        // Scenery lies within 75 m of the route's world axis. Fit its full
+        // projected height range and the visible route, including rear views
+        // in the opening orbit, so small roadside objects retain map texels.
+        const midZ=intro ? d : (cam.cz+d+FAR)*.5;
+        const spanZ=intro ? 2*(FAR+CHUNK) : d+FAR-cam.cz+CHUNK;
+        const area=bounds(-8*sx,midZ-8*sz,192+18*Math.abs(sx),spanZ+18*Math.abs(sz));
+        renderMap(farMap,area,.48);
+        farSample={t,d,intro,x:area[0]+cam.cx,z:area[1]+cam.cz,invX:area[2],invZ:area[3],sx,sz};
+      }
+      gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+      gl.viewport(0,0,w,h);
+      gl.enable(gl.DITHER);
+      gl.enable(gl.DEPTH_TEST);gl.enableVertexAttribArray(1);
+      gl.useProgram(scene);
+      transformUniform=uniform;
+      gl.uniform1f(uniform.shadowStrength,1);
+      gl.uniform2f(uniform.lightSlope,sun.x/sun.y,sun.z/sun.y);
+      gl.uniform2f(uniform.farLightSlope,farSample.sx,farSample.sz);
+      gl.uniform1f(uniform.cameraHeight,cam.cy);
+      gl.uniform4fv(uniform.nearBounds,nearBounds);
+      gl.uniform4f(uniform.farBounds,farSample.x-cam.cx,farSample.z-cam.cz,farSample.invX,farSample.invZ);
+      gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,farMap.texture);
+      gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,nearMap.texture);
+      for(let i=start;i<=end;i++) draw(chunks.get(i),0,0,i*CHUNK);
       if(s.boost) draw(trail,x,.12,d+.16*Math.sin(t*16),a);
-      draw(coach,x,.035+Math.sin(d*1.05)*speed*.018+(s.flat?0:Math.cos(d*.73)*.008),d,a,roll,brakingPitch(s));
-      if(s.impacts?.length) {
+      for(const actor of actors) draw(...actor.args);
+      if(impacts.length) {
         gl.enable(gl.BLEND);
         gl.blendFuncSeparate(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA,gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
         gl.depthMask(false);
-        impactParts(s,(type,x,y,z,yaw,roll,pitch,sx,sy,sz,alpha)=>{
-          const solid=type==='cone'||type==='barrier';
+        for(const {solid,alpha,args} of impacts) {
           gl.uniform1f(uniform.opacity,alpha);
           if(solid && alpha===1) gl.depthMask(true);
-          draw(items[type],x,y,z,yaw,roll,pitch,sx,sy,sz,solid && alpha<1);
+          draw(...args,solid && alpha<1);
           if(solid && alpha===1) gl.depthMask(false);
-        });
+        }
         gl.depthMask(true);
         gl.disable(gl.BLEND);
       }
@@ -759,8 +1004,14 @@
       observe?.disconnect();
       canvas.removeEventListener('webglcontextlost',lostHandler);
       canvas.removeEventListener('webglcontextrestored',restoreHandler);
-      for(const model of [coach,range,shadow,trail,...Object.values(items),...chunks.values()]) gl.deleteBuffer(model.buf);
-      gl.deleteBuffer(skyBuffer);gl.deleteProgram(sky);gl.deleteProgram(scene);
+      for(const model of [coach,range,trail,...Object.values(items),...chunks.values()]) gl.deleteBuffer(model.buf);
+      for(const target of [rawMap,blurMap,nearMap,farMap]) {
+        gl.deleteFramebuffer(target.framebuffer);
+        gl.deleteTexture(target.texture);
+        if(target.depth) gl.deleteRenderbuffer(target.depth);
+      }
+      gl.deleteBuffer(skyBuffer);
+      for(const p of [sky,scene,caster,filter]) gl.deleteProgram(p);
     }
     return {render,dispose,renderer:is2?'WebGL 2':'WebGL'};
   }
@@ -774,6 +1025,40 @@
     // A small horizon buffer replaces a per-pixel depth buffer in the software renderer.
     const columns=32, stride=columns+1, depthStep=6, rows=Math.ceil(FAR/depthStep)+1;
     const skyline=new Float32Array(stride*rows);
+    // A few points describe each solid's silhouette in the software renderer.
+    // Project these instead of reprocessing all the triangles used for its trim.
+    function ring(rx,y,rz,n=8) {
+      return Array.from({length:n},(_,i)=>[rx*Math.cos(i*TAU/n),y,rz*Math.sin(i*TAU/n)]);
+    }
+    function boxCorners(rx,low,high,rz) {
+      return [low,high].flatMap(y=>[[-rx,y,-rz],[rx,y,-rz],[rx,y,rz],[-rx,y,rz]]);
+    }
+    const shadowProfiles={
+      bus:boxCorners(1.18,.15,2.94,2.58),
+      cone:[...ring(.52,.04,.49),[0,1.15,0]],
+      barrier:boxCorners(1.12,.05,1.28,.25),
+      repair:boxCorners(.56,.50,1.36,.32),
+      boost:[[0,.38,0],[-.56,.91,0],[.58,1.28,0],[.38,1.73,0],[-.10,1.73,0]],
+      pine:[[0,0,0],...ring(.31,.27,.31),[0,1,0]],
+      crown:[[0,0,0],...ring(.32,.62,.32),...ring(.18,.89,.18),[0,1,0]]
+    };
+    function convexOutline(points) {
+      points.sort((a,b)=>a[0]-b[0]||a[1]-b[1]);
+      const hull=[];
+      function add(p,start) {
+        while(hull.length>=start+2) {
+          const a=hull[hull.length-2],b=hull[hull.length-1];
+          if((b[0]-a[0])*(p[1]-a[1])>(b[1]-a[1])*(p[0]-a[0])) break;
+          hull.pop();
+        }
+        hull.push(p);
+      }
+      for (const p of points) add(p,0);
+      const end=hull.length-1;
+      for (let i=points.length-2;i>=0;i--) add(points[i],end);
+      hull.pop();
+      return hull;
+    }
     function faces(m) {
       const out=[];
       let group=0, layer=0, side=0, end=0;
@@ -840,6 +1125,16 @@
       const sky=ctx.createLinearGradient(0,0,0,mountainBase);
       sky.addColorStop(0,'#abaaca');sky.addColorStop(1,'#ffcb98');
       ctx.fillStyle=sky;ctx.fillRect(0,0,w,h);
+      const sun=sunlight(s.time||0), disc=projectSun(sun,c);
+      if(disc) {
+        const x=(1+disc[0])*w*.5, y=(1-disc[1])*h*.5, radius=h*.26;
+        if(x>-radius && x<w+radius && y>-radius && y<h+radius) {
+          const glow=ctx.createRadialGradient(x,y,0,x,y,radius);
+          glow.addColorStop(0,'rgba(255,231,171,1)');glow.addColorStop(.10,'rgba(255,231,171,1)');
+          glow.addColorStop(.11,'rgba(255,213,151,.42)');glow.addColorStop(1,'rgba(255,213,151,0)');
+          ctx.fillStyle=glow;ctx.fillRect(x-radius,y-radius,2*radius,2*radius);
+        }
+      }
       for (let layer=0;layer<2;layer++) {
         ctx.fillStyle=layer?'#929979':'#ae9aa9';ctx.beginPath();ctx.moveTo(-6,h);
         for(let x=-6;x<=w+6;x+=6) {
@@ -857,31 +1152,30 @@
       function roadClearance(p) {
         return Math.min((roadCrest-p[3])*focal/roadCrest,crestAt(p[0],ridgeBefore(p[3]))+.4-p[1]);
       }
-      function appendRoadStrip(a,b,l,r,y) {
-        const ax=roadX(a), bx=roadX(b);
-        const points=[point(ax+l,y,a),point(ax+r,y,a),point(bx+r,y,b),point(bx+l,y,b)];
+      function appendGroundPath(vertices,clearance) {
+        const points=vertices.map(v=>point(v[0],v[1],v[2]));
         let visible=points;
         if (!points.every(p=>p[2]>.25)) {
-          if (!intro || points.every(p=>p[2]<=.25)) return;
+          if (points.every(p=>p[2]<=.25)) return;
           // A side-facing camera can straddle the road. Clip its crossing edges
           // in world space before projecting them.
-          const vertices=[[ax+l,y,a],[ax+r,y,a],[bx+r,y,b],[bx+l,y,b]];
           visible=[];
-          for(let i=0;i<4;i++) {
-            const j=(i+1)%4, start=points[i][2], finish=points[j][2];
+          for(let i=0;i<points.length;i++) {
+            const j=(i+1)%points.length, start=points[i][2], finish=points[j][2];
             if(start>.25) visible.push(points[i]);
             if((start>.25)!==(finish>.25)) {
               const ratio=(.25-start)/(finish-start);
-              visible.push(point(vertices[i][0]+(vertices[j][0]-vertices[i][0])*ratio,y,
+              visible.push(point(vertices[i][0]+(vertices[j][0]-vertices[i][0])*ratio,
+                vertices[i][1]+(vertices[j][1]-vertices[i][1])*ratio,
                 vertices[i][2]+(vertices[j][2]-vertices[i][2])*ratio));
             }
           }
         }
         if(visible.some(p=>p[3]>depthStep)) {
           const clipped=[];
-          let prev=visible[visible.length-1],prevEdge=roadClearance(prev);
+          let prev=visible[visible.length-1],prevEdge=clearance(prev);
           for(const next of visible) {
-            const edge=roadClearance(next);
+            const edge=clearance(next);
             if((prevEdge>0)!==(edge>0)) {
               const t=prevEdge/(prevEdge-edge);
               clipped.push([prev[0]+(next[0]-prev[0])*t,prev[1]+(next[1]-prev[1])*t]);
@@ -899,7 +1193,9 @@
       function ribbon(l,r,y,color,dashed=false) {
         ctx.fillStyle=color;ctx.beginPath();
         for(let z=zs;z>=near-4;z-=4) {
-          if(!dashed || z%12===0) appendRoadStrip(Math.max(z,near),z+4,l,r,y);
+          if(dashed && z%12!==0) continue;
+          const a=Math.max(z,near), b=z+4, ax=roadX(a), bx=roadX(b);
+          appendGroundPath([[ax+l,y,a],[ax+r,y,a],[bx+r,y,b],[bx+l,y,b]],roadClearance);
         }
         ctx.fill();
       }
@@ -959,17 +1255,24 @@
         ctx.globalAlpha=1;
       }
       const actors=[];
-      for(let n=Math.floor(near/8);n<=Math.ceil(far/8);n++) {
+      // A tree just outside the streamed view can still shade the foreground.
+      const casterMargin=16/sun.y;
+      for(let n=Math.floor((near-casterMargin)/8);n<=Math.ceil((far+casterMargin)/8);n++) {
         const z=n*8, r=random(n+463);
         for(const side of [-1,1]) {
           const x=roadX(z)+side*(ROAD+3.8+r()*12), size=3.5+r()*4;
           actors.push({type:'tree',x,y:meadowHeight(x,z),z,size,kind:r()<.53});
         }
       }
-      for(const o of s.objects||[]) if(o.z>-7&&o.z<155) actors.push({type:o.type,x:roadX(d+o.z)+o.lane*LANE,z:d+o.z});
-      actors.push({type:'bus',x:roadX(d)+(s.laneX||0)*LANE,z:d});
+      for(const o of s.objects||[]) if(o.z>=-8 && o.z<=FAR) {
+        const z=d+o.z, pickup=o.type==='repair'||o.type==='boost', t=s.time||0;
+        actors.push({type:o.type,x:roadX(z)+o.lane*LANE,z,y:pickup?.12*Math.sin(t*3+z*.06):0,
+          yaw:Math.atan(roadSlope(z))+(pickup?.29*Math.sin(t*2.5+z*.17):0),ground:o.type==='oil'||o.type==='pothole'});
+      }
+      actors.push({type:'bus',x:roadX(d)+(s.laneX||0)*LANE,y:.025,z:d,
+        yaw:Math.atan(roadSlope(d))+(s.heading||0),roll:(s.steer||0)*.072+(s.flat?.045:0),pitch:brakingPitch(s)});
       impactParts(s,(type,x,y,z,yaw,roll,pitch,sx,sy,sz,alpha)=>{
-        const ground=type==='oil'||type==='waterRipple'||type==='repairHalo'||type==='boostHalo'||type==='barrier';
+        const ground=type==='oil'||type==='waterRipple'||type==='repairHalo'||type==='boostHalo';
         actors.push({type,x,y,z,yaw,roll,pitch,sx,sy,sz,alpha,ground});
       });
       for (const a of actors) {
@@ -987,7 +1290,82 @@
         ctx.closePath();ctx.clip();
         return true;
       }
+      function drawSolid(a) {
+        const base=point(a.x,a.y,a.z);
+        const clipped=clipToRidge(base,focal*1.4/Math.max(1,base[2]));
+        model(a.type,a.x,a.y,a.z,a.yaw,a.roll||0,a.pitch,a.sx,a.sy,a.sz,a.alpha);
+        if(clipped) ctx.restore();
+      }
+      for(const a of actors) if(a.ground) drawSolid(a);
+
+      const rayX=-sun.x/sun.y,rayZ=-sun.z/sun.y;
+      // Find where the light ray meets the meadow, including shadows stretching
+      // from an elevated bank across the flat road.
+      function land(x,y,z) {
+        let fall=Math.max(0,y-meadowHeight(x,z));
+        for(let i=0;i<4;i++) {
+          const next=Math.max(0,y-meadowHeight(x+rayX*fall,z+rayZ*fall));
+          if(Math.abs(next-fall)<.015) break;
+          fall=(fall+next)*.5;
+        }
+        return [x+rayX*fall,z+rayZ*fall];
+      }
+      function groundClearance(p) { return crestAt(p[0],ridgeBefore(p[3]))+.4-p[1]; }
+      function drawShadow(a,profile) {
+        if(a.forward < -casterMargin || a.forward>FAR+casterMargin) return;
+        const yaw=a.yaw||0,roll=a.roll||0,pitch=a.pitch||0;
+        const cy=Math.cos(yaw),sy=Math.sin(yaw),cr=Math.cos(roll),sr=Math.sin(roll),ct=Math.cos(pitch),st=Math.sin(pitch);
+        const outline=convexOutline(profile.map(([vx,vy,vz])=>{
+          const x=vx*(a.size||a.sx||1), y=vy*(a.size||a.sy||1), z=vz*(a.size||a.sz||1);
+          const py=y*ct-z*st,pz=y*st+z*ct,px=x*cr-py*sr;
+          return land(a.x+px*cy+pz*sy,a.y+x*sr+py*cr,a.z-px*sy+pz*cy);
+        }));
+        if(outline.length<3) return;
+        let mx=0,mz=0;
+        const rim=[];
+        for(let i=0;i<outline.length;i++) {
+          const [x,z]=outline[i], [nx,nz]=outline[(i+1)%outline.length];
+          mx+=x;mz+=z;
+          const steps=Math.ceil(Math.hypot(nx-x,nz-z)/4);
+          for(let k=0;k<steps;k++) {
+            const px=x+(nx-x)*k/steps,pz=z+(nz-z)*k/steps;
+            rim.push([px,pz]);
+          }
+        }
+        mx/=outline.length;mz/=outline.length;
+        const footprint=scale=>rim.map(([x,z])=>{
+          x=mx+(x-mx)*scale;z=mz+(z-mz)*scale;
+          return [x,meadowHeight(x,z),z];
+        });
+        const outer=footprint(1.34),screen=outer.map(v=>point(...v));
+        const center=point(mx,meadowHeight(mx,mz),mz);
+        const penumbra=a.size ? a.size*.16 : a.type==='bus' ? .58 : .2;
+        const blur=Math.min(h*.055,penumbra*focal/Math.max(2,center[2]));
+        if(screen.every(p=>p[2]<=.25) || (screen.every(p=>p[2]>.25) &&
+          (screen.every(p=>p[0]<-3*blur)||screen.every(p=>p[0]>w+3*blur)||screen.every(p=>p[1]>h+3*blur)||screen.every(p=>groundClearance(p)<-1)))) return;
+        // Drape nested contours on the terrain. A smooth opacity ramp and
+        // extra samples for large shadows keep the foreground feathered.
+        const opacity=(a.alpha??1)*(.72-.32*Math.min(1,Math.max(0,a.forward)/FAR));
+        const layers=Math.max(6,Math.min(36,Math.ceil(2*blur)));
+        for(let i=0;i<layers;i++) {
+          ctx.globalAlpha=opacity*Math.sin(Math.PI*(i+.5)/layers)/layers;
+          ctx.beginPath();
+          appendGroundPath(i===0?outer:footprint(1.34-i*.72/(layers-1)),groundClearance);
+          ctx.fill();
+        }
+      }
+      ctx.save();
+      ctx.beginPath();ctx.moveTo(0,h);
+      for(let col=0;col<=columns;col++) ctx.lineTo(w*col/columns,skyline[farRidge+col]);
+      ctx.lineTo(w,h);ctx.clip();
+      ctx.fillStyle='#283849';
       for(const a of actors) {
+        const profile=shadowProfiles[a.type==='tree'?(a.kind?'pine':'crown'):a.type];
+        if(profile) drawShadow(a,profile);
+      }
+      ctx.restore();
+      for(const a of actors) {
+        if(a.ground) continue;
         let clipped=false;
         if(a.type==='tree') {
           const b=point(a.x,a.y,a.z),top=point(a.x,a.y+a.size,a.z),sh=b[1]-top[1];
@@ -1002,25 +1380,8 @@
           } else {
             ctx.fillStyle='#89a153';ctx.beginPath();ctx.ellipse(b[0],top[1]+sh*.33,sh*.32,sh*.34,0,0,TAU);ctx.fill();
           }
-        } else if (a.alpha!==undefined) {
-          model(a.type,a.x,a.y,a.z,a.yaw,a.roll,a.pitch,a.sx,a.sy,a.sz,a.alpha);
         } else {
-          const bus=a.type==='bus';
-          if(!bus) {
-            const base=point(a.x,0,a.z);
-            clipped=clipToRidge(base,focal*1.4/Math.max(1,base[2]));
-          }
-          const yaw=Math.atan(roadSlope(a.z))+(bus ? s.heading||0 : 0);
-          const roll=bus ? (s.steer||0)*.072+(s.flat ? .045 : 0) : 0;
-          if (bus) {
-            const shadow=[];
-            for (let i=0;i<12;i++) {
-              const theta=i*TAU/12, x=1.43*Math.cos(theta), z=2.91*Math.sin(theta);
-              shadow.push(point(a.x+.13+x*Math.cos(yaw)+z*Math.sin(yaw),.018,a.z+.12-x*Math.sin(yaw)+z*Math.cos(yaw)));
-            }
-            polygon(shadow,'#414c55');
-          }
-          model(a.type,a.x,bus?.025:0,a.z,yaw,roll,bus?brakingPitch(s):0);
+          drawSolid(a);
         }
         if(clipped) ctx.restore();
       }
