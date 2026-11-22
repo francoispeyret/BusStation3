@@ -24,12 +24,16 @@
   const BRAKE_SECONDS = 3;
   const OUTRO_SECONDS = 4.5;
   const LANES = [-1, 0, 1];
-  const LANE_WIDTH = 3.65;
+  const LANE_WIDTH = window.BusBiomes.LANE_WIDTH;
+  const ROAD_HALF_WIDTH = 1.5 * LANE_WIDTH;
+  const DRIVABLE_HALF_WIDTH = ROAD_HALF_WIDTH + LANE_WIDTH;
+  const SHOULDER_SPEED_FACTOR = 0.62;
   const BUS_HALF_WIDTH = 1.16;
   const BUS_HALF_LENGTH = 2.54;
+  const REAR_AXLE_Z = -1.55;
+  const TIRE_WIDTH = 0.29;
   const WHEELBASE = 3.09;
   const MAX_HEADING_FROM_ROAD = 0.54;
-  const STEERING_LIMIT = 1.5 - (BUS_HALF_WIDTH + 0.08) / LANE_WIDTH;
   // Half-extents in metres, matching the visible road objects.
   const FOOTPRINTS = {
     cone: [0.46, 0.44], barrier: [1.12, 0.35], oil: [1.12, 0.97],
@@ -42,6 +46,24 @@
   const isPickup = type => type === 'repair' || type === 'boost';
   const roadX = z => 11 * Math.sin(z * 0.012) + 8 * Math.sin(z * 0.022 + 0.7);
   const roadSlope = z => 0.132 * Math.cos(z * 0.012) + 0.176 * Math.cos(z * 0.022 + 0.7);
+
+  function tireContact(x, z) {
+    const beyond = Math.abs(x - roadX(z)) - ROAD_HALF_WIDTH;
+    return clamp(0.5 + beyond / TIRE_WIDTH, 0, 1);
+  }
+
+  function updateWheelContact(state) {
+    const sin = Math.sin(state.worldHeading), cos = Math.cos(state.worldHeading);
+    const busX = roadX(state.roadZ) + state.laneX * LANE_WIDTH;
+    let contact = 0;
+    for (const wheel of state.rearWheels) {
+      wheel.x = busX + wheel.side * BUS_HALF_WIDTH * cos + REAR_AXLE_Z * sin;
+      wheel.z = state.roadZ - wheel.side * BUS_HALF_WIDTH * sin + REAR_AXLE_Z * cos;
+      wheel.contact = tireContact(wheel.x, wheel.z);
+      contact += wheel.contact + tireContact(wheel.x + WHEELBASE * sin, wheel.z + WHEELBASE * cos);
+    }
+    state.shoulderContact = contact / 4;
+  }
 
   // Both bends repeat after this distance on the Z axis. Measure one period
   // along the centreline so each kilometre marker has a permanent road position.
@@ -347,13 +369,16 @@
   }
 
   function startingState() {
-    return {
+    const state = {
       status: 'ready', phase: 'driving', introProgress: 1, stopProgress: 0,
       distance: 0, roadZ: 0, speed: LAUNCH_SPEED, time: 0, laneX: 0,
       worldHeading: Math.atan(roadSlope(0)), heading: 0, steer: 0,
+      shoulderContact: 0, rearWheels: [-1, 1].map(side => ({side, x: 0, z: 0, contact: 0})),
       objects: [], impacts: [], boost: 0, slip: 0, flat: false, hit: 0, score: 0, lap: 1,
       lapBiomes: ['hills'], lapProgress: 0, health: 3, gear: 3, rpm: 2200, braking: false
     };
+    updateWheelContact(state);
+    return state;
   }
 
   function create({ onUpdate = () => {}, onEvent = () => {}, onFinish = () => {} } = {}) {
@@ -453,15 +478,28 @@
       }
     }
 
+    // Project the rotated bus onto the road's lateral axis so its corners
+    // stay inside the two shoulders even on a bend.
+    function limitToRoadside(x, roadAngle) {
+      const angle = state.worldHeading - roadAngle;
+      const halfSpan = BUS_HALF_WIDTH * Math.abs(Math.cos(angle)) + BUS_HALF_LENGTH * Math.abs(Math.sin(angle));
+      const limit = DRIVABLE_HALF_WIDTH - (halfSpan + 0.16) / Math.cos(roadAngle);
+      const offset = x - roadX(state.roadZ);
+      state.laneX = clamp(offset, -limit, limit) / LANE_WIDTH;
+      return Math.abs(offset) > limit;
+    }
+
     // During a cinematic the scenery moves, but only player-driven metres count.
     function rollAlongRoad(path, dt) {
       if (path <= 0) return;
       const travel = path * Math.cos(state.worldHeading);
       const x = roadX(state.roadZ) + state.laneX * LANE_WIDTH + path * Math.sin(state.worldHeading);
       state.roadZ += travel;
-      state.laneX = clamp((x - roadX(state.roadZ)) / LANE_WIDTH, -STEERING_LIMIT, STEERING_LIMIT);
+      const roadAngle = Math.atan(roadSlope(state.roadZ));
       state.heading *= Math.exp(-2 * dt);
-      state.worldHeading = Math.atan(roadSlope(state.roadZ)) + state.heading;
+      state.worldHeading = roadAngle + state.heading;
+      limitToRoadside(x, roadAngle);
+      updateWheelContact(state);
       for (const object of state.objects) object.z -= travel;
     }
 
@@ -520,6 +558,7 @@
       const cruise = Math.min(114, 78 + state.distance * 0.012);
       let target = (state.flat ? cruise * 0.70 : cruise) + (state.boost ? 39 : 0);
       if (state.braking) target = Math.min(34, target);
+      target *= 1 - state.shoulderContact * (1 - SHOULDER_SPEED_FACTOR);
       const rate = state.speed > target ? 62 : state.boost ? 36 : 13;
       state.speed += clamp(target - state.speed, -rate * dt, rate * dt);
       state.gear = Math.min(6, 1 + Math.floor(state.speed / 21));
@@ -545,15 +584,12 @@
       const x = roadX(state.roadZ) + state.laneX * LANE_WIDTH + path * Math.sin(midHeading);
       state.roadZ += travel;
       state.distance += path;
-      const nextX = (x - roadX(state.roadZ)) / LANE_WIDTH;
-      state.laneX = clamp(nextX, -STEERING_LIMIT, STEERING_LIMIT);
       const newRoadAngle = Math.atan(roadSlope(state.roadZ));
-      if (state.laneX !== nextX) {
-        // Shoulder friction slows the bus and gradually straightens the body.
+      if (limitToRoadside(x, newRoadAngle)) {
         state.worldHeading += (newRoadAngle - state.worldHeading) * (1 - Math.exp(-7 * dt));
-        state.speed = Math.max(28, state.speed - 23 * dt);
       }
       state.heading = state.worldHeading - newRoadAngle;
+      updateWheelContact(state);
       const progress = routeProgressAt(state.roadZ);
       const lap = 1 + Math.floor(progress);
       state.lapProgress = progress % 1;
@@ -669,6 +705,7 @@
           // Start just behind the line so the first obstacle stays far ahead at handover.
           state.roadZ = -LAUNCH_SPEED * (INTRO_SECONDS - LAUNCH_WAIT) / 7.2;
           state.worldHeading = Math.atan(roadSlope(state.roadZ));
+          updateWheelContact(state);
         }
         nextWave = 55;
         fillRoad();
@@ -710,5 +747,5 @@
   }
 
   window.BusDrive = { create, roadX, roadSlope, periodForLap, sceneryForLap, SCENERY_NAMES,
-    lapAtRoadZ, roadZForLap };
+    lapAtRoadZ, roadZForLap, LANE_WIDTH, ROAD_HALF_WIDTH, DRIVABLE_HALF_WIDTH };
 })();

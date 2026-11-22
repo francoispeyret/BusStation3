@@ -68,8 +68,8 @@
     }
     if((index%3+3)%3===1 && contains(40)) {
       house(m,roadX(start+40)-22,40,'#d4825f');
-    } else if ((index%3+3)%3===0 && contains(42) && visible('stop',roadX(start+42)+8.5,start+42)) {
-      const z=42, x=roadX(start+z)+8.5;
+    } else if ((index%3+3)%3===0 && contains(42) && visible('stop',roadX(start+42)+road+3,start+42)) {
+      const z=42, x=roadX(start+z)+road+3;
       m.box(x,0,z,.18,2.75,.16,'#799090');
       m.box(x,1.86,z,.92,1,.15,'#305e7a');
       m.box(x,2.08,z-.084,.53,.53,.025,'#fff3ce');
@@ -95,7 +95,7 @@
   }
 
   biomes.register('hills',{
-    name:'Collines',grass:'#afba6d',verge:'#d6bf86',height:meadowRise,details:hillsideDetails,
+    name:'Collines',grass:'#afba6d',verge:'#a4af62',height:meadowRise,details:hillsideDetails,
     canvasRoadside:hillsideCanvasTrees,
     populate({index,random,add}) {
       const side=index%2 ? -1 : 1;

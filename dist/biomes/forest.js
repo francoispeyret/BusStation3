@@ -48,7 +48,7 @@
   }
 
   biomes.register('forest',{
-    name:'Forêt',grass:'#637b55',verge:'#a49370',height:meadowRise,
+    name:'Forêt',grass:'#637b55',verge:'#7b8c61',height:meadowRise,
     canvasFir:{needles:firNeedles,tiers:firTiers},
     roadside({length,random:r,place}) {
       for(const side of [-1,1]) for(let row=0;row<4;row++) for(let i=0;i<8;i++) {
@@ -57,10 +57,10 @@
       }
     },
     drawRoadside(m,a,localZ) {forestFir(m,a.x,a.y,localZ,a.size,a.variant);},
-    populate({index,random,add}) {
+    populate({index,road,random,add}) {
       const side=index%2 ? 1 : -1;
-      add('deer',19+random()*25,side*(9+random()*2),{yaw:side*.8,motion:graze});
-      if(index%3===0) add('deer',43,side*12,{size:.72,variant:1,yaw:side*1.1,motion:graze});
+      add('deer',19+random()*25,side*(road+3.5+random()*2),{yaw:side*.8,motion:graze});
+      if(index%3===0) add('deer',43,side*(road+6.5),{size:.72,variant:1,yaw:side*1.1,motion:graze});
     }
   });
 })();

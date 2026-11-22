@@ -4,10 +4,10 @@
 
   const FAR = 288;
   const TAU = Math.PI * 2;
-  const {roadX, roadSlope, periodForLap, sceneryForLap, lapAtRoadZ, roadZForLap} = window.BusDrive;
-  const LAP_SIGN_OFFSET = 8.2;
+  const {roadX, roadSlope, periodForLap, sceneryForLap, lapAtRoadZ, roadZForLap, DRIVABLE_HALF_WIDTH} = window.BusDrive;
+  const LAP_SIGN_OFFSET = DRIVABLE_HALF_WIDTH + 2.85;
   const {Mesh,rgb,random,lettering} = window.BusMesh;
-  const {CHUNK,LANE,ROAD,biomeFor,routeThemeAt,terrainScale,terrainHeightAt,surfaceColorAt,
+  const {CHUNK,LANE,ROAD,biomeFor,routeThemeAt,terrainScale,terrainHeight:heightAtOffset,terrainHeightAt,surfaceColorAt,shoulderColorAt,
     skylineScaleAt,themesInSection,isRoadsideActorVisible,roadsideScenery,biomeModelMesh,
     biomeActorsInSection,biomeActorPose} = window.BusRoute;
   const BEND_START = 24;
@@ -22,6 +22,25 @@
     return -BEND_RATE*beyond*beyond;
   }
 
+  // Coalesce adjacent terrain colours so the software renderer can fill long runs at once.
+  function drawShoulders(biome,from,to,route,strip) {
+    const verge=ROAD+biome.shoulder;
+    strip(from,to,-verge,verge,-.015,biome.verge);
+    if(verge>=DRIVABLE_HALF_WIDTH) return;
+    for(const side of [-1,1]) {
+      const inner=side*verge, outer=side*DRIVABLE_HALF_WIDTH;
+      const l=Math.min(inner,outer), r=Math.max(inner,outer);
+      let start=from, color=shoulderColorAt(outer,from,route);
+      if(biome.surface) for(let z=Math.floor(from/4)*4+4;z<to;z+=4) {
+        const next=shoulderColorAt(outer,z,route);
+        if(next===color) continue;
+        strip(start,z,l,r,-.030,color);
+        start=z; color=next;
+      }
+      strip(start,to,l,r,-.030,color);
+    }
+  }
+
   function section(index,lapBiomes) {
     const m=new Mesh(), start=index*CHUNK, r=random(index+843);
     const themes=themesInSection(index,lapBiomes);
@@ -30,12 +49,14 @@
     const rows = Array.from({length:CHUNK/4+3}, (_,i) => {
       const worldZ=start+(i-1)*4, lap=lapAtRoadZ(worldZ);
       const biome=biomeFor(sceneryForLap(lap,lapBiomes)), scale=terrainScale(worldZ,lap,lapBiomes,biome);
-      return {x:roadX(worldZ), heights:meadowBands.map(offset=>scale*biome.height(offset,worldZ))};
+      return {x:roadX(worldZ), heights:meadowBands.map(offset=>scale*heightAtOffset(biome,offset,worldZ))};
     });
     function strip(z0,z1,l,r,y,col) {
       const a=roadX(start+z0),b=roadX(start+z1);
       m.quad([a+l,y,z0],[a+r,y,z0],[b+r,y,z1],[b+l,y,z1],col);
     }
+    const nextMarker=roadZForLap(lapAtRoadZ(start)+1);
+    const shoulderStrip=(a,b,l,r,y,c)=>strip(a-start,b-start,l,r,y,c);
     for(let z=0;z<CHUNK;z+=4) {
       const a=rows[z/4+1], b=rows[z/4+2];
       const midZ=start+z+2, biome=biomeFor(routeThemeAt(midZ,lapBiomes));
@@ -46,14 +67,19 @@
         m.quad([a.x+l,al-.06,z],[a.x+u,ar-.06,z],[b.x+u,br-.06,z+4],
           [b.x+l,bl-.06,z+4],biome.surface?.((l+u)/2,midZ)||biome.grass,Math.max(.55,Math.min(1.3,light)));
       }
-      const verge=ROAD+biome.shoulder;
-      strip(z,z+4,-verge,verge,-.015,biome.verge);
+      const from=start+z, to=from+4;
+      if(from<nextMarker && nextMarker<to) {
+        drawShoulders(biomeFor(routeThemeAt(from,lapBiomes)),from,nextMarker,lapBiomes,shoulderStrip);
+        drawShoulders(biomeFor(routeThemeAt(nextMarker,lapBiomes)),nextMarker,to,lapBiomes,shoulderStrip);
+      } else {
+        drawShoulders(biome,from,to,lapBiomes,shoulderStrip);
+      }
       strip(z,z+4,-ROAD,ROAD,0,biome.roadColor);
       for(const side of [-1,1]) {
         const x=side*(ROAD-.18);
         strip(z,z+4,x-.055,x+.055,.013,'#f7db8c');
         if(biome.curb) {
-          const curb=side*(ROAD+.20);
+          const curb=side*(DRIVABLE_HALF_WIDTH+.20);
           strip(z,z+4,curb-.11,curb+.11,.01,'#e9ddc8');
         }
       }
@@ -72,7 +98,7 @@
     }
     const firstProp=m.data.length;
     for(const theme of themes) {
-      biomeFor(theme).details?.(m,{index,start,length:CHUNK,road:ROAD,roadX,random:r,
+      biomeFor(theme).details?.(m,{index,start,length:CHUNK,road:DRIVABLE_HALF_WIDTH,roadX,random:r,
         contains:z=>routeThemeAt(start+z,lapBiomes)===theme,visible:isRoadsideActorVisible});
     }
     // Match the same two grass triangles used above so roots and rocks sit
@@ -413,6 +439,66 @@
     }
   }
 
+  // Sample each rear tire on the game clock so a slower display produces the same spray.
+  function shoulderSpray() {
+    const jitter=random(Math.floor(performance.now()*1000));
+    const chips=[], previous=[];
+    let wheels, lastTime=0;
+    return function update(s) {
+      const time=s.time||0;
+      if(wheels!==s.rearWheels || time<lastTime) {
+        wheels=s.rearWheels;
+        chips.length=0;
+        previous.length=0;
+        for(const wheel of wheels||[]) previous.push({...wheel});
+        lastTime=time;
+      }
+      if(!wheels || time===lastTime) return chips;
+      const speed=s.speed/3.6, sin=Math.sin(s.worldHeading), cos=Math.cos(s.worldHeading);
+      const lastTick=Math.floor(time*30);
+      for(let tick=Math.max(lastTick-5,Math.floor(lastTime*30)+1);tick<=lastTick;tick++) {
+        const start=tick/30, fraction=(start-lastTime)/(time-lastTime);
+        for(let i=0;i<wheels.length;i++) {
+          const wheel=wheels[i], from=previous[i];
+          const contact=from.contact+(wheel.contact-from.contact)*fraction;
+          if(contact<=0 || jitter()>=Math.min(1,speed/22)*contact) continue;
+          const x=from.x+(wheel.x-from.x)*fraction, z=from.z+(wheel.z-from.z)*fraction;
+          const color=shoulderColorAt(x-roadX(z),z,s.lapBiomes);
+          const burst=1+Math.floor(jitter()**2*4);
+          for(let j=0;j<burst;j++) {
+            const lateral=wheel.side*(.65+jitter()*3.3), forward=speed*(.07+jitter()*.25);
+            const lift=1.7+jitter()*Math.min(4.3,speed*.22);
+            chips.push({type:'shoulderChip',start,life:(lift+Math.sqrt(lift*lift+1.96))/9.8,
+              originX:x,originZ:z,vx:lateral*cos+forward*sin,vz:forward*cos-lateral*sin,lift,
+              size:.055+jitter()*.095,lean:jitter()-.5,spin:jitter()*4-2,
+              color,shade:.68+jitter()*.57});
+          }
+        }
+      }
+      for(let i=0;i<wheels.length;i++) Object.assign(previous[i],wheels[i]);
+      lastTime=time;
+      let count=0;
+      for(const chip of chips) {
+        const age=time-chip.start;
+        if(age>=chip.life) continue;
+        chip.x=chip.originX+chip.vx*age;
+        chip.y=.10+chip.lift*age-4.9*age*age;
+        chip.z=chip.originZ+chip.vz*age;
+        chip.radius=chip.size*Math.min(1,3*(1-age/chip.life));
+        chip.tilt=chip.lean+chip.spin*age;
+        chips[count++]=chip;
+      }
+      chips.length=count;
+      return chips;
+    };
+  }
+
+  function chipCorners(chip,cos,sin,originZ=0) {
+    const {x,y,radius:r,tilt}=chip, z=chip.z-originZ;
+    const vertex=(across,up)=>[x+cos*across*r,y+up*r,z-sin*across*r];
+    return [vertex(-1,0),vertex(tilt,1.28),vertex(.84,.18),vertex(-tilt,-.72)];
+  }
+
   // Frame the distant ridgeline one sixth of the way down the driving view.
   const FOCAL_LENGTH = 1.55;
   const SKY_FRACTION = 1/6;
@@ -439,7 +525,10 @@
     // A low ridge 115 m ahead represents the skyline of the curved course.
     // Sight it from the actual camera height, including in portrait.
     const chasePitch = RIDGE_PITCH + Math.atan2(height-2,115);
-    const follow = .22 * LANE * (state.laneX || 0);
+    const offset = LANE * (state.laneX || 0);
+    // In portrait, follow the bus farther once it leaves the outer asphalt lane.
+    const extraFollow = Math.min(.5, Math.max(0, 1.5 - aspect));
+    const follow = .22 * offset + Math.sign(offset) * Math.max(0, Math.abs(offset) - LANE) * extraFollow;
     const chase = {
       cx: roadX(distance) + follow - Math.sin(a) * back,
       cy: height,
@@ -726,6 +815,8 @@
 
   function gpuRenderer(canvas,gl,is2) {
     let scene,sky,uniform,skyUniform,skyBuffer,coach,trail,range,items, lost=false;
+    const updateSpray=shoulderSpray();
+    let sprayBuffer;
     let caster,filter,casterUniform,filterUniform,rawMap,blurMap,nearMap,farMap;
     let farSample=null;
     const chunks=new Map();
@@ -799,6 +890,7 @@
         streak.tri([side*(x-.038),0,-2.30],[side*(x+.038),0,-2.30],[side*x,0,-2.30-l],'#ffcc66');
       }
       trail=upload(streak);
+      sprayBuffer=gl.createBuffer();
       items={};
       for(const type of ['cone','barrier','oil','pothole','repair','boost',...IMPACT_MESHES]) items[type]=upload(prop(type));
       gl.enable(gl.DEPTH_TEST);
@@ -1019,6 +1111,18 @@
       for(let i=start;i<=end;i++) draw(chunks.get(i),0,0,i*CHUNK);
       if(s.boost) draw(trail,x,.12,d+.16*Math.sin(t*16),a);
       for(const actor of actors) if(actor.visible!==false) draw(...actor.args);
+      const chips=updateSpray(s);
+      if(chips.length) {
+        const mesh=new Mesh(), cos=Math.cos(cam.a), sin=Math.sin(cam.a);
+        for(const chip of chips) {
+          const [l,top,r,bottom]=chipCorners(chip,cos,sin,d);
+          mesh.tri(l,top,bottom,chip.color,chip.shade);
+          mesh.tri(top,r,bottom,chip.color,chip.shade*.80);
+        }
+        gl.bindBuffer(gl.ARRAY_BUFFER,sprayBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(mesh.data),gl.DYNAMIC_DRAW);
+        draw({buf:sprayBuffer,n:mesh.data.length/6},0,0,d);
+      }
       if(impacts.length) {
         gl.enable(gl.BLEND);
         gl.blendFuncSeparate(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA,gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
@@ -1045,6 +1149,7 @@
         if(target.depth) gl.deleteRenderbuffer(target.depth);
       }
       gl.deleteBuffer(skyBuffer);
+      gl.deleteBuffer(sprayBuffer);
       for(const p of [sky,scene,caster,filter]) gl.deleteProgram(p);
     }
     return {render,dispose,renderer:is2?'WebGL 2':'WebGL'};
@@ -1053,6 +1158,7 @@
   // Software fallback projects the same bus and pickups. Simplified scenery keeps
   // the road playable on devices that cannot create a WebGL context.
   function canvasRenderer(canvas, ctx) {
+    const updateSpray=shoulderSpray();
     const cars = new Map();
     const scenerySections = new Map();
     const terrainSections = new Map();
@@ -1171,7 +1277,7 @@
         // Biomes can supply simplified placements, a tiered fir silhouette,
         // or a reduced-detail building mesh for the software renderer.
         if(biome.canvasRoadside) actors.push(...biome.canvasRoadside({
-          start,length:CHUNK,road:ROAD,roadX,random,visible:isRoadsideActorVisible,
+          start,length:CHUNK,road:DRIVABLE_HALF_WIDTH,roadX,random,visible:isRoadsideActorVisible,
           contains:z=>routeThemeAt(z,lapBiomes)===id,heightAt:(x,z)=>terrainHeightAt(x,z,lapBiomes)
         }));
         if(biome.roadside) for(const a of roadsideScenery(index,id,lapBiomes)) {
@@ -1232,11 +1338,11 @@
       }
       const mixed=zones.length>1, localBiome=biomeFor(zones[0].theme);
       const terrainHeight=mixed ? (x,z)=>terrainHeightAt(x,z,lapBiomes)
-        : (x,z)=>localBiome.height(x-roadX(z),z);
+        : (x,z)=>heightAtOffset(localBiome,x-roadX(z),z);
       // Light and shadows meet the bridge deck before reaching the water below.
       function receiverHeight(x,z) {
         const offset=x-roadX(z);
-        if(Math.abs(offset)<=ROAD) return 0;
+        if(Math.abs(offset)<=DRIVABLE_HALF_WIDTH) return 0;
         const height=terrainHeight(x,z);
         if(height<0 && Math.abs(offset)<ROAD+biomeFor(routeThemeAt(z,lapBiomes)).shoulder) return 0;
         return height;
@@ -1544,11 +1650,11 @@
       for(const zone of zones) {
         const start=Math.max(near,zone.start),end=Math.min(far,zone.end);
         if(start>=end) continue;
-        const biome=biomeFor(zone.theme), verge=ROAD+biome.shoulder;
-        ribbon(-verge,verge,-.01,biome.verge,false,start,end);
+        const biome=biomeFor(zone.theme);
+        drawShoulders(biome,start,end,lapBiomes,(a,b,l,r,y,color)=>ribbon(l,r,y,color,false,a,b));
         ribbon(-ROAD,ROAD,0,biome.roadColor,false,start,end);
         if(biome.curb) for(const side of [-1,1]) {
-          const curb=side*(ROAD+.20);
+          const curb=side*(DRIVABLE_HALF_WIDTH+.20);
           ribbon(curb-.10,curb+.10,.02,'#e6d8ba',false,start,end);
         }
         for(const detail of biome.roadDetails) ribbon(detail.left,detail.right,detail.y,detail.color,false,start,end);
@@ -1654,6 +1760,7 @@
       }
       actors.push({type:'bus',x:busX,y:.025,z:d,
         yaw:busYaw,roll:(s.steer||0)*.072+(s.flat?.045:0),pitch:brakingPitch(s)});
+      actors.push(...updateSpray(s));
       impactParts(s,(type,x,y,z,yaw,roll,pitch,sx,sy,sz,alpha)=>{
         const ground=type==='oil'||type==='waterRipple'||type==='repairHalo'||type==='boostHalo';
         actors.push({type,x,y,z,yaw,roll,pitch,sx,sy,sz,alpha,ground});
@@ -1802,7 +1909,13 @@
       for(const a of actors) {
         if(a.ground) continue;
         let clipped=false;
-        if(a.type==='fir') {
+        if(a.type==='shoulderChip') {
+          const [l,top,r,bottom]=chipCorners(a,cs,sn).map(v=>point(...v));
+          if(l[2]<.3) continue;
+          const color=rgb(a.color).map(channel=>channel*a.shade);
+          polygon([l,top,bottom],litColor(color));
+          polygon([top,r,bottom],litColor(color.map(channel=>channel*.80)));
+        } else if(a.type==='fir') {
           drawForestFir(a);
         } else if(a.type==='pine' || a.type==='broadleaf') {
           const b=point(a.x,a.y,a.z),top=point(a.x,a.y+a.size,a.z),sh=b[1]-top[1];

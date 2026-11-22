@@ -1,6 +1,7 @@
 (() => {
   'use strict';
   const biomes=window.BusBiomes;
+  const lane=biomes.LANE_WIDTH;
   const {turn,mod}=window.BusMesh;
 
   const waterY=-4.4;
@@ -67,17 +68,17 @@
   biomes.model('bridgePortal',m=>{
     const steel='#58777b', bright='#92ab9f';
     for(const side of [-1,1]) {
-      const x=side*6.62;
+      const x=side*(6.62+lane);
       m.box(x,waterY-.2,0,1.55,-waterY+.9,2.24,'#9b9f8d');
       m.box(x,.65,0,.83,10.2,1.04,steel);
       m.box(x-.49*side,6.5,0,.18,4.43,1.12,bright);
       m.box(x,10.81,0,1.08,.44,1.24,bright);
       for(const z of [-.48,.48]) {
-        m.quad([x,7.27,z],[x,8.26,z],[side*4.18,10.50,z],[side*3.23,10.50,z],steel);
+        m.quad([x,7.27,z],[x,8.26,z],[side*(4.18+lane),10.50,z],[side*(3.23+lane),10.50,z],steel);
       }
     }
-    m.box(0,10.39,0,13.23,.63,1.05,steel);
-    m.box(0,10.95,0,13.27,.17,1.11,bright);
+    m.box(0,10.39,0,13.23+2*lane,.63,1.05,steel);
+    m.box(0,10.95,0,13.27+2*lane,.17,1.11,bright);
   });
 
   const sail=(t,p)=>({x:1.60*Math.sin(t*.17+p),z:4.2*Math.sin(t*.23+p),
@@ -90,17 +91,17 @@
     [5.46,6.65,.045,'#b5baae'],[6.20,6.48,.08,'#92a7a3'],
     [6.24,6.44,.64,'#809a99'],[6.20,6.48,1.30,'#b9cbbe']
   ]) {
-    rails.push({left:side<0?-outer:inner,right:side<0?-inner:outer,y,color});
+    rails.push({left:(side<0?-outer:inner)+side*lane,right:(side<0?-inner:outer)+side*lane,y,color});
   }
   biomes.register('bridge',{
-    name:'Pont',grass:'#579ca9',verge:'#aab7ad',roadColor:'#66737a',roadDetails:rails,skyline:false,signPlatform:true,
+    name:'Pont',grass:'#579ca9',verge:'#aab7ad',roadColor:'#66737a',shoulder:lane+.68,roadDetails:rails,skyline:false,signPlatform:true,
     height:()=>waterY,
     surface(x,z) {
       return Math.sin(x*.125+z*.037)+Math.sin(x*.034-z*.071)>.96?'#68aab3':'#579ca9';
     },
     populate({index,length,random:r,add}) {
       for(const side of [-1,1]) for(let i=0;i<8;i++) {
-        add('bridgePost',(i+.5)*length/8,side*6.34,{anchor:'road',keepNearSign:true});
+        add('bridgePost',(i+.5)*length/8,side*(6.34+lane),{anchor:'road',keepNearSign:true});
       }
       if(mod(index,2)===0) add('bridgePortal',length*.52,0,{anchor:'road',keepNearSign:true});
       const side=mod(index,2)?-1:1;

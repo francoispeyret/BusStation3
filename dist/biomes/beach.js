@@ -68,10 +68,10 @@
       if(depth<22) return '#65b6b4';
       return '#559aa7';
     },
-    populate({index,length,random:r,add}) {
+    populate({index,length,road,random:r,add}) {
       for(let i=0;i<4;i++) {
         const along=length*(i+.25+r()*.42)/4;
-        add('seaCliff',along,-(14.7+r()*9),{size:.75+r()*.54,variant:mod(i+index,3),yaw:r()*2});
+        add('seaCliff',along,-(road+8+r()*9),{size:.75+r()*.54,variant:mod(i+index,3),yaw:r()*2});
         if(i%2===0) add('seaCliff',along,-(33+r()*11),{size:1.45+r()*.47,variant:mod(i+index+1,3)});
         add('seaFoam',along,21.9+r()*4,{size:.7+r()*.6,yaw:.20});
       }

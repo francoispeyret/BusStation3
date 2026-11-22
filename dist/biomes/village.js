@@ -1,7 +1,7 @@
 /* Village streets, public buildings, storefronts and pedestrians. */
 (() => {
   'use strict';
-  const {register}=window.BusBiomes;
+  const {register,LANE_WIDTH}=window.BusBiomes;
   const {lettering,turn:TAU}=window.BusMesh;
   const {tree}=window.BusCountryside;
 
@@ -140,7 +140,7 @@
   }
 
   register('village',{
-    name:'Village',grass:'#a6b577',verge:'#d4c4ab',shoulder:2.35,curb:true,roadside:villageLots,
+    name:'Village',grass:'#a6b577',verge:'#d4c4ab',shoulder:LANE_WIDTH+2.35,curb:true,roadside:villageLots,
     canvasBuilding:villageBuilding,
     drawRoadside(m,a,localZ,r) {
       if(a.type==='broadleaf') tree(m,a.x,localZ,a.size,1+a.variant%2,r);

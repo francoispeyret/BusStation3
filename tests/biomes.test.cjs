@@ -66,3 +66,52 @@ test('each landscape streams valid models and moving inhabitants during a lap', 
     assert.ok(mesh.data.length>0 && mesh.data.length%18===0 && mesh.data.every(Number.isFinite), model);
   }
 });
+
+test('steering onto either shoulder slows the bus until its tires regain asphalt', () => {
+  let frame;
+  runtime.window.matchMedia = () => ({matches:true});
+  runtime.requestAnimationFrame = callback => { frame = callback; return 1; };
+  runtime.cancelAnimationFrame = () => {};
+  runtime.clearTimeout = clearTimeout;
+  for (const side of [-1, 1]) {
+    let tick = 0;
+    const game = BusDrive.create();
+    game.start();
+    frame(0);
+    game.state.speed = 78;
+    game.steer(side);
+    let straddled = false;
+    while (tick < 90) {
+      frame(++tick * 1000 / 60);
+      straddled ||= game.state.rearWheels.some(w => w.contact === 1)
+        && game.state.rearWheels.some(w => w.contact === 0);
+    }
+    assert.ok(straddled, 'only the tire off the road should spray when straddling');
+    assert.ok(side * game.state.laneX >= 2, 'the full shoulder lane is reachable');
+    assert.equal(game.state.shoulderContact, 1);
+    const shoulderSpeed = game.state.speed;
+    assert.ok(shoulderSpeed < 60);
+    game.steer(-side);
+    while (tick < 240 && game.state.shoulderContact > 0) frame(++tick * 1000 / 60);
+    assert.equal(game.state.shoulderContact, 0);
+    assert.ok(game.state.rearWheels.every(w => w.contact === 0));
+    assert.ok(game.state.speed > shoulderSpeed);
+    game.stop();
+  }
+});
+
+test('wheel spray switches material at the lap marker and uses the deck on bridges', () => {
+  const route = ['hills', 'snow', 'bridge'];
+  const offset = 2 * BusDrive.LANE_WIDTH;
+  const snowStart = BusDrive.roadZForLap(2), bridgeStart = BusDrive.roadZForLap(3);
+  for (const side of [-1, 1]) {
+    const underWheel = z => BusRoute.shoulderColorAt(side * offset, z, route);
+    assert.equal(underWheel(snowStart - .01), BusRoute.biomeFor('hills').grass);
+    assert.equal(underWheel(snowStart + .01), BusRoute.biomeFor('snow').grass);
+    assert.equal(underWheel(bridgeStart + .01), BusRoute.biomeFor('bridge').verge);
+  }
+  const rails = BusRoute.biomeFor('bridge').roadDetails.filter(band => band.y > .1);
+  assert.ok(rails.length > 0);
+  assert.ok(rails.every(band => band.right <= -BusDrive.DRIVABLE_HALF_WIDTH
+    || band.left >= BusDrive.DRIVABLE_HALF_WIDTH));
+});

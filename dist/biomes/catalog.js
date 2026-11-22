@@ -16,5 +16,5 @@
     if (models.has(id)) throw new Error('Modèle déjà enregistré : ' + id);
     models.set(id, build);
   }
-  window.BusBiomes = {register, model, definitions, models};
+  window.BusBiomes = {register, model, definitions, models, LANE_WIDTH:3.65};
 })();

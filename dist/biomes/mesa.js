@@ -72,7 +72,7 @@
       if(b<1.28) return '#dfb987';
       return Math.sin(x*.15+z*.046)>.65?'#d49a70':'#c98e68';
     },
-    populate({index,length,random:r,add}) {
+    populate({index,length,road,random:r,add}) {
       for(const side of [-1,1]) {
         const along=length*(.27+r()*.44),offset=side*(31+r()*9);
         if(lake(offset,index*length+along)>2.6) {
@@ -81,7 +81,7 @@
         add('sandstoneButte',length*(.15+r()*.7),side*(63+r()*21),
           {size:1.12+r()*.48,variant:Math.floor(r()*3)});
         for(let i=0;i<2;i++) {
-          const pos=length*(.07+.43*i+r()*.29),gap=side*(10+r()*9);
+          const pos=length*(.07+.43*i+r()*.29),gap=side*(road+1.5+r()*9);
           if(lake(gap,index*length+pos)>1.35) add('cactus',pos,gap,{size:.58+r()*.55,variant:i});
         }
       }

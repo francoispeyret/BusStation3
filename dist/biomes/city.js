@@ -81,7 +81,7 @@
     return {z:2.15*Math.sin(travel),y:.025*Math.abs(Math.sin(5.6*time+phase)),yaw:Math.PI*.5*(1-Math.tanh(5*Math.cos(travel)))};
   };
   biomes.register('city',{
-    name:'Grande ville',grass:'#9a9fa0',verge:'#c5c4b9',roadColor:'#50545e',shoulder:3.25,curb:true,skyline:false,
+    name:'Grande ville',grass:'#9a9fa0',verge:'#c5c4b9',roadColor:'#50545e',shoulder:biomes.LANE_WIDTH+3.25,curb:true,skyline:false,
     height:()=>0,
     roadPaint(z){return mod(Math.floor(z),72)===28 ? crosswalk : [];},
     populate({index,length,road,random,add}) {
