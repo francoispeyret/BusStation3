@@ -36,7 +36,6 @@
   const noticeStatus = $('notice-status');
   const impactTitles = {cone: 'Oups !', barrier: 'Boum !', oil: 'Ça glisse !', pothole: 'Crevé !'};
   const pendingNotices = [];
-  let pendingDodge = null;
   const gauges = Object.fromEntries(['score','distance','lap','speed'].map(key => [key, $(key)]));
   const lapNumber = new Intl.NumberFormat('fr-FR', {minimumIntegerDigits: 2});
   for (const dial of document.querySelectorAll('.reading number-flow')) {
@@ -256,27 +255,20 @@
   notice.addEventListener('animationend', e => {
     if (e.target !== notice.firstElementChild) return;
     if (pendingNotices.length) showNotice(pendingNotices.shift());
-    else if (pendingDodge) {
-      showNotice(pendingDodge);
-      pendingDodge = null;
-    } else notice.replaceChildren();
+    else notice.replaceChildren();
   });
   function clearNotices() {
     pendingNotices.length = 0;
-    pendingDodge = null;
     notice.replaceChildren();
     noticeStatus.replaceChildren();
   }
   function event(feedback, state) {
     hearts.set(state.health);
-    if (!notice.firstElementChild || (notice.dataset.type === 'dodge' && feedback.type !== 'dodge')) {
-      showNotice(feedback);
-    } else if (feedback.type === 'dodge') {
-      if (pendingDodge) pendingDodge.points += feedback.points;
-      else pendingDodge = {...feedback};
-    } else pendingNotices.push(feedback);
     // Refresh after the physics step has added all bonuses to the score.
     lastHud = -1;
+    if (feedback.type === 'dodge') return;
+    if (notice.firstElementChild) pendingNotices.push(feedback);
+    else showNotice(feedback);
   }
   function showRun(active) {
     delete cabinet.dataset.phase;

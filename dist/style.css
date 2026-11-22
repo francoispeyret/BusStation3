@@ -1093,7 +1093,7 @@ body:not(.in-race) #road {
   --notice-face:#ff9b84;
   --notice-edge:#c85663;
 }
-.notice[data-type="boost"],.notice[data-type="dodge"],.notice[data-type="jump"] {
+.notice[data-type="boost"],.notice[data-type="jump"] {
   --notice-face:#ffda75;
   --notice-edge:#da8446;
 }
@@ -1116,11 +1116,6 @@ body:not(.in-race) #road {
   text-align:center;
   transform-origin:center;
   animation:notice-pop 1.12s both;
-}
-.notice[data-type="dodge"] .notice-card { animation-duration:.76s; }
-.notice[data-type="jump"],.notice[data-type="spin"] {
-  place-items:start;
-  padding:clamp(18px,4vmin,42px);
 }
 .notice[data-type="jump"] .notice-headline,.notice[data-type="spin"] .notice-headline {
   font-size:clamp(32px,6vmin,56px);
