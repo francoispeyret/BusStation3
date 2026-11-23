@@ -8,6 +8,7 @@
   const notices = window.BusNotices.create($('fare-notice'), $('fare-status'));
   const format = new Intl.NumberFormat('fr-FR');
   const pacer = window.BusSettings.createFramePacer();
+  const audio = window.BusAudio.create();
   const keys = new Map(Object.entries({
     ArrowUp:'accelerate', z:'accelerate', w:'accelerate',
     ArrowDown:'brake', s:'brake', ArrowLeft:'left', q:'left', a:'left', ArrowRight:'right', d:'right'
@@ -15,7 +16,16 @@
   const held = new Map();
   const touchButtons = document.querySelectorAll('[data-drive]');
   let driver, sim, renderer, frame, lastFrame, lastHud = 0;
+  let nextEngineUpdate = 0, brakingToStop = false, lastAirBrake = -Infinity;
+  const cancelSteeringDrag = window.BusControls.bindSteeringDrag(screen, () => sim && !menu.open,
+    (id, amount) => held.set(id, amount), id => held.delete(id));
   const profiles = accounts.mount($('profiles'), {onSelect:startService});
+  window.BusControls.mountSound($('audio-controls'), audio, () => {
+    if (sim && !menu.open) screen.focus({preventScroll:true});
+  });
+  window.BusControls.mountGraphics($('graphics-controls'), () => {
+    if (sim && menu.open) renderer.draw(sim.state);
+  });
 
   function write(id, value) {
     const element = $(id);
@@ -23,6 +33,7 @@
   }
 
   function releaseControls() {
+    cancelSteeringDrag();
     held.clear();
     touchButtons.forEach(button => button.classList.remove('is-held'));
   }
@@ -59,6 +70,7 @@
 
   function feedback(event) {
     if (event.type === 'boarding') {
+      audio.effect('boarding');
       const updated = accounts.recordBoarding(driver.id, event.fare);
       if (updated) driver = updated;
       else driver.balance += event.fare;
@@ -66,18 +78,42 @@
     } else if (event.type === 'alighting') {
       notices.push({type:'lap', title:'Descente', message:event.stopName});
     } else if (event.type === 'collision') {
+      audio.effect('collision');
       notices.push({type:'collision', title:'Accrochage !', message:'Reprends le volant'});
+    } else if (event.type === 'doors' && sim.state.doorsOpen) {
+      airBrake();
     } else if (event.type === 'hint') {
       notices.push({type:'hint', title:'Portes', message:event.message});
     }
     lastHud = 0;
   }
 
+  function airBrake() {
+    if (sim.state.time - lastAirBrake < 1.2) return;
+    lastAirBrake = sim.state.time;
+    audio.airBrake();
+  }
+  function updateEngine(braking) {
+    const {time, bus} = sim.state;
+    audio.update({time, speed:Math.abs(bus.speed) * 3.6, braking});
+    nextEngineUpdate = time + .09;
+  }
+
   function draw(now) {
     if (!sim || menu.open) return;
     const input = {};
-    for (const control of held.values()) input[control] = true;
+    for (const control of held.values()) {
+      if (typeof control === 'number') input.steer = control;
+      else input[control] = true;
+    }
+    if (input.brake && sim.state.bus.speed > 3) brakingToStop = true;
+    if (!input.brake) brakingToStop = false;
     if (lastFrame !== undefined) sim.update((now - lastFrame) / 1000, input);
+    if (brakingToStop && sim.state.bus.speed < .8) {
+      airBrake();
+      brakingToStop = false;
+    }
+    if (sim.state.time >= nextEngineUpdate) updateEngine(input.brake && sim.state.bus.speed >= 0);
     lastFrame = now;
     if (pacer.due(now)) renderer.draw(sim.state);
     if (now - lastHud >= 100) {
@@ -93,6 +129,8 @@
     lastFrame = undefined;
     lastHud = 0;
     pacer.reset();
+    updateEngine(false);
+    audio.setDriving(true);
     screen.focus({preventScroll:true});
     frame = requestAnimationFrame(draw);
   }
@@ -100,6 +138,7 @@
   function startService(profile) {
     driver = profile;
     sim = window.CareerSim.create({onEvent:feedback});
+    lastAirBrake = -Infinity;
     $('profiles').hidden = true;
     $('back-home').hidden = true;
     $('service').hidden = false;
@@ -112,6 +151,7 @@
     window.scrollTo(0, 0);
     refreshInstruments();
     run();
+    audio.horn();
   }
 
   function drawStopList() {
@@ -134,6 +174,8 @@
     if (!sim) return;
     cancelAnimationFrame(frame);
     releaseControls();
+    brakingToStop = false;
+    audio.setDriving(false);
     stage.classList.add('is-paused');
     $('map-panel').hidden = !showMap;
     $('pause-details').hidden = showMap;
@@ -159,6 +201,7 @@
     menu.close();
     cancelAnimationFrame(frame);
     releaseControls();
+    audio.setDriving(false);
     notices.clear();
     stage.classList.remove('is-paused');
     sim = null;
@@ -176,6 +219,7 @@
   }
 
   $('doors').addEventListener('click', doors);
+  $('horn').addEventListener('click', () => audio.horn());
   $('pause-service').addEventListener('click', () => openMenu(false));
   $('open-map').addEventListener('click', () => openMenu(true));
   $('menu-map').addEventListener('click', () => openMenu(true));
@@ -187,6 +231,7 @@
   });
   document.addEventListener('keydown', event => {
     if (!sim || event.metaKey || event.ctrlKey || event.altKey) return;
+    if (event.target.closest('input, textarea, select, [contenteditable="true"]')) return;
     const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
     if (menu.open) {
       if (['p','m'].includes(key) && !event.repeat) resume();
@@ -196,10 +241,11 @@
     if (control) {
       event.preventDefault();
       held.set(event.code || key, control);
-    } else if (['e','m','p','Escape'].includes(key)) {
+    } else if (['e','h','m','p','Escape'].includes(key)) {
       event.preventDefault();
       if (event.repeat) return;
       if (key === 'e') doors();
+      else if (key === 'h') audio.horn();
       else openMenu(key === 'm');
     }
   });
@@ -224,5 +270,6 @@
     if (sim && !menu.open) openMenu(false);
   }
   window.addEventListener('blur', autoPause);
+  window.addEventListener('pagehide', autoPause);
   document.addEventListener('visibilitychange', () => { if (document.hidden) autoPause(); });
 })();

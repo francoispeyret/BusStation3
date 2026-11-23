@@ -142,7 +142,7 @@
       gl_FragColor = vec4(mix(lit, fogTint, haze), opacity);
     }`;
 
-  function create(THREE, scene, renderer, {BEND_START, BEND_RATE, FAR}) {
+  function create(THREE, scene, renderer, {BEND_START, BEND_RATE, FAR, fixedWorld = false}) {
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.VSMShadowMap;
 
@@ -219,42 +219,49 @@
       shadow.mapPass?.setSize(width,height);
     }
 
-    function updateDistant(light, forwardZ, d, time, lapBiomes, level) {
+    function updateDistant(light, forward, pose, d, time, lapBiomes, level) {
       distantShadow.intensity = light.shadow;
       const {x,y,z} = light.direction;
+      const originX = fixedWorld ? pose.x : 0, originZ = fixedWorld ? -pose.z : 0;
       if (!lastDistant || lastDistant.level !== level || lastDistant.route !== lapBiomes ||
           time < lastDistant.time || time - lastDistant.time >= .16 || Math.abs(d - lastDistant.d) >= 8 ||
-          Math.abs(forwardZ - lastDistant.forwardZ) > .08 ||
+          Math.hypot(originX-lastDistant.originX, originZ-lastDistant.originZ) >= 8 ||
+          Math.hypot(forward.x-lastDistant.forwardX, forward.y-lastDistant.forwardZ) > .08 ||
           Math.abs(y - lastDistant.y) + Math.abs(x - lastDistant.x) > .025) {
-        // Fit the visible stretch of road in light space, including bends, hills
-        // and the reversed view during the opening orbit. Distances are in metres.
+        // The arcade corridor follows the route Z axis. The career corridor
+        // follows the camera through turns in the fixed street network.
         const halfLength = (FAR + 32) / 2;
         const halfWidth = 58, halfHeight = 18;
         const horizontal = Math.hypot(x,z);
-        const across = (halfWidth * Math.abs(z) + halfLength * Math.abs(x)) / horizontal;
-        const up = (halfWidth * Math.abs(x) + halfLength * Math.abs(z)) * y / horizontal + halfHeight * horizontal;
+        const axisX = fixedWorld ? forward.x : 0, axisZ = fixedWorld ? forward.y : -1;
+        const alongLight = Math.abs(x*axisX-z*axisZ) / horizontal;
+        const acrossLight = Math.abs(z*axisX+x*axisZ) / horizontal;
+        const across = halfWidth*alongLight + halfLength*acrossLight;
+        const up = (halfWidth*acrossLight + halfLength*alongLight)*y + halfHeight*horizontal;
         const camera = distantShadow.camera;
         camera.left = -across;
         camera.right = across;
         camera.top = up;
         camera.bottom = -up;
         camera.updateProjectionMatrix();
-        distantSun.target.position.set(0, 8, (FAR - halfLength) * forwardZ);
+        const ahead = FAR - halfLength;
+        distantSun.target.position.set(originX + ahead*axisX, 8, originZ + ahead*forward.y);
         distantSun.position.set(x,y,-z).multiplyScalar(FAR + 96).add(distantSun.target.position);
         const width = Math.min(2048, level.shadowWidth * 2);
         setMapSize(distantShadow, width, Math.round(width * 1.5));
         distantShadow.needsUpdate = true;
-        lastDistant = {d,time,route:lapBiomes,level,forwardZ,x,y};
+        lastDistant = {d,time,route:lapBiomes,level,originX,originZ,forwardX:forward.x,forwardZ:forward.y,x,y};
       }
       // The meshes are rebased around the coach every frame. Sample them in
       // the origin used to render the cached map so its shadows stay on the road.
-      common.distantOriginOffset.value = lastDistant.d - d;
+      common.distantOriginOffset.value = fixedWorld ? 0 : lastDistant.d - d;
     }
 
     function update({light, cam, bus, pose, rocket, busOpacity, level, d, time, lapBiomes}) {
       const {direction} = light;
       const forward = common.viewForward.value.set(Math.sin(cam.a), -Math.cos(cam.a));
-      sun.target.position.set(pose.x + 9*forward.x, 2, 9*forward.y);
+      const coachZ = pose.z ?? 0;
+      sun.target.position.set(pose.x + 9*forward.x, 2, 9*forward.y-coachZ);
       sun.position.set(direction.x, direction.y, -direction.z).multiplyScalar(145).add(sun.target.position);
       sun.shadow.intensity = light.shadow;
       // Fit the near road footprint as the angle of the sun changes between laps.
@@ -268,7 +275,7 @@
       shadowCam.bottom = -height;
       shadowCam.updateProjectionMatrix();
       setMapSize(sun.shadow, level.shadowWidth, Math.round(level.shadowWidth * 4/3));
-      updateDistant(light, forward.y, d, time, lapBiomes, level);
+      updateDistant(light, forward, pose, d, time, lapBiomes, level);
 
       common.ambientTint.value.fromArray(light.tint);
       common.fogTint.value.fromArray(light.fog);
@@ -280,7 +287,7 @@
       common.rocketLight.value.set(rocket?.mountY ?? 0, rocket?.lightZ ?? 0, rocket?.power ?? 0);
 
       coachMatrix.makeRotationFromEuler(rotation.set(pose.pitch, pose.yaw, pose.roll));
-      coachMatrix.setPosition(pose.x, pose.y, 0);
+      coachMatrix.setPosition(pose.x, pose.y, coachZ);
       common.worldToCoach.value.copy(coachMatrix).invert().multiply(reflectZ);
       const [x,y,z] = bus.headlamp;
       for (let i=0; i<headlights.length; i++) {
@@ -305,5 +312,38 @@
     return {update, dispose, material, backdropMaterial, createMaterial};
   }
 
-  window.BusThreeLighting = {create};
+  // Ground contours for the Canvas beams. Slices are sampled in the receiver's
+  // horizontal plane, with the same fade and vertical cutoff in both modes.
+  function beamContours(slices,layers,cos,sin,receiverHeight,draw) {
+    for(let i=0;i<layers;i++) {
+      const level=(i+.5)/layers,left=[],right=[];
+      let previous=slices[0];
+      for(const slice of slices) {
+        if((previous.power>level)!==(slice.power>level)) {
+          const ratio=(level-previous.power)/(slice.power-previous.power);
+          const x=previous.x+(slice.x-previous.x)*ratio,z=previous.z+(slice.z-previous.z)*ratio;
+          const tip=[x,receiverHeight(x,z),z];
+          left.push(tip);right.push(tip);
+        }
+        previous=slice;
+        if(slice.power<=level) continue;
+        const half=slice.width*Math.sqrt(1-Math.sqrt(level/slice.power));
+        const dx=half*cos,dz=-half*sin;
+        const x=slice.x,z=slice.z;
+        left.push([x-dx,receiverHeight(x-dx,z-dz),z-dz]);
+        right.push([x+dx,receiverHeight(x+dx,z+dz),z+dz]);
+      }
+      if(left.length<2) continue;
+      draw(left.concat(right.reverse()));
+    }
+  }
+
+  function beamPower(forward,heightFromLens) {
+    if(forward<=0 || forward>=56) return 0;
+    const fade=Math.min(1,Math.max(0,(forward-16)/40));
+    const vertical=(heightFromLens+.07*forward)/(.25+.16*forward);
+    return (1-fade*fade*(3-2*fade))*Math.max(0,1-vertical*vertical);
+  }
+
+  window.BusThreeLighting = {create,beamPower,beamContours};
 })();

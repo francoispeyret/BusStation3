@@ -5,7 +5,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const gameRuntime = require('./game-runtime.cjs');
 
-function createLighting() {
+function createLighting(options = {}) {
   const runtime = gameRuntime();
   runtime.AbortController = AbortController;
   const dist = path.join(__dirname, '../dist');
@@ -15,7 +15,7 @@ function createLighting() {
   const {THREE} = runtime;
   const scene = new THREE.Scene();
   const renderer = {shadowMap:{}, capabilities:{maxTextureSize:4096}};
-  const lighting = runtime.window.BusThreeLighting.create(THREE, scene, renderer, {BEND_START:24, BEND_RATE:.00095, FAR:288});
+  const lighting = runtime.window.BusThreeLighting.create(THREE, scene, renderer, {BEND_START:24, BEND_RATE:.00095, FAR:288,...options});
   const frame = {
     bus:runtime.window.BusModels.models[0], busOpacity:1, d:0, time:0, lapBiomes:['hills'],
     cam:{cx:0, cz:-10, a:0}, pose:{x:0, y:0, yaw:0, roll:0, pitch:0},
@@ -50,6 +50,37 @@ test('daylight and headlight shadows keep the full VSM blur when switching graph
   }
   lighting.dispose();
   assert.equal(scene.children.length, 0);
+});
+
+test('career shadows follow a turn across the fixed map and headlights remain attached to the coach', () => {
+  const {THREE, scene, lighting, frame} = createLighting({fixedWorld:true,BEND_RATE:0});
+  const suns = scene.children.filter(light => light.isDirectionalLight);
+  const headlights = scene.children.filter(light => light.isSpotLight);
+  frame.pose.x = 248;
+  frame.pose.z = 119;
+  frame.level = {shadowWidth:768,lighting:0};
+  frame.light.night = 1;
+  for (const heading of [0, Math.PI/2, Math.PI, -Math.PI/2, .72]) {
+    frame.cam.a = frame.pose.yaw = heading;
+    lighting.update(frame);
+    scene.updateMatrixWorld(true);
+    for (const sun of suns) sun.shadow.updateMatrices(sun);
+    for (let metres = 0; metres <= 200; metres += 10) {
+      const point = new THREE.Vector3(248+metres*Math.sin(heading),0,-119-metres*Math.cos(heading));
+      assert.ok(suns.some(sun => {
+        const uv = point.clone().applyMatrix4(sun.shadow.matrix);
+        return uv.x > .02 && uv.x < .98 && uv.y > .02 && uv.y < .98 && uv.z > 0 && uv.z < 1;
+      }), `Uncovered street at ${metres} m, heading ${heading}`);
+    }
+    for (const [index,lamp] of headlights.entries()) {
+      const local = lamp.position.clone().applyMatrix4(lighting.material.uniforms.worldToCoach.value);
+      const [x,y,z] = frame.bus.headlamp;
+      assert.ok(local.distanceTo(new THREE.Vector3(index ? x : -x, y, z+.07)) < 1e-8);
+      const forward = lamp.target.position.clone().sub(lamp.position).normalize();
+      assert.ok(forward.dot(new THREE.Vector3(Math.sin(heading),0,-Math.cos(heading))) > .99);
+    }
+  }
+  lighting.dispose();
 });
 
 test('directional shadows cover the curved road and shoulders through 200 metres at every detail level', () => {

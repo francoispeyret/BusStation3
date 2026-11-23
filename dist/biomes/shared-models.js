@@ -20,8 +20,8 @@
     }
   });
 
-  biomes.model('walker',(m,variant)=>{
-    const jacket=['#bd5948','#447c87','#d3a348'][variant%3], skin=['#b97d5a','#d8a381','#885d48'][variant%3];
+  biomes.model('walker',(m,variant,jacket=['#bd5948','#447c87','#d3a348'][variant%3])=>{
+    const skin=['#b97d5a','#d8a381','#885d48'][variant%3];
     for(const side of [-1,1]) {
       const x=side*.105, stride=side*.19;
       beam(m,[x,.85,0],[x,.44,stride*.68],.095,.08,'#405366');

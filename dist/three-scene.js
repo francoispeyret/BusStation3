@@ -3,7 +3,7 @@
   'use strict';
 
   function create(THREE,scene,{FAR,section,backdrop,prop,PROP_TYPES,impactParts,shoulderSpray,chipCorners,groundBend,landingSpot,lighting}) {
-    const {Mesh,gpuGeometry}=window.BusMesh;
+    const {Mesh}=window.BusMesh;
     const {CHUNK,LANE,skylineScaleAt,biomeModelMesh,biomeActorPose}=window.BusRoute;
     const {roadX,roadSlope}=window.BusDrive;
     const root=new THREE.Group();
@@ -11,16 +11,7 @@
     root.scale.z=-1;
     scene.add(root);
 
-    function geometryOf(model) {
-      const {vertices,indices}=gpuGeometry(model);
-      const buffer=new THREE.InterleavedBuffer(vertices,6);
-      const geometry=new THREE.BufferGeometry();
-      geometry.setAttribute('position',new THREE.InterleavedBufferAttribute(buffer,3,0));
-      geometry.setAttribute('color',new THREE.InterleavedBufferAttribute(buffer,3,3));
-      if(indices) geometry.setIndex(new THREE.BufferAttribute(indices,1));
-      geometry.computeBoundingSphere();
-      return geometry;
-    }
+    const geometryOf=model=>window.BusMesh.threeGeometry(THREE,model);
 
     const assets=new Map();
     function asset(key,makeModel) {

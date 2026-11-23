@@ -5,13 +5,23 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const context = vm.createContext({window: {}});
-const filename = path.join(__dirname, '../dist/career-sim.js');
-vm.runInContext(fs.readFileSync(filename, 'utf8'), context, {filename});
+for (const file of ['bus-handling.js', 'career-sim.js']) {
+  const filename = path.join(__dirname, '../dist', file);
+  vm.runInContext(fs.readFileSync(filename, 'utf8'), context, {filename});
+}
 const create = context.window.CareerSim.create;
 
 function tick(sim, seconds, controls) {
   const frames = Math.round(seconds * 60);
   for (let i = 0; i < frames; i++) sim.update(1 / 60, controls);
+}
+
+function driveUntil(sim, controls, reached) {
+  for (let i = 0; i < 60 * 15; i++) {
+    sim.update(1 / 60, controls);
+    if (reached(sim.state.bus)) return;
+  }
+  assert.fail('The bus did not reach the waypoint within 15 s');
 }
 
 test('collect fares once at the station, then take the first rider to the market', () => {
@@ -40,8 +50,9 @@ test('collect fares once at the station, then take the first rider to the market
   assert.equal(state.earnings, waiting * 3);
   assert.equal(sim.toggleDoors(), true);
 
-  tick(sim, 7, {accelerate: true});
-  tick(sim, 1.65, {brake: true});
+  const market = state.stops.find(stop => stop.id === rider.destination);
+  driveUntil(sim, {accelerate:true}, bus => bus.y <= market.y + 23);
+  driveUntil(sim, {brake:true}, bus => bus.speed <= .5);
   assert.equal(state.nearbyStop.id, rider.destination);
   assert.equal(sim.toggleDoors(), true);
   assert.equal(state.people[0].phase, 'alighting');
@@ -72,9 +83,10 @@ test('the driver can turn onto a second road that leads out into the countryside
   const sim = create();
   // Isolate steering from incidental traffic along the test itinerary.
   sim.state.cars = [];
-  tick(sim, 4.3, {accelerate: true});
-  tick(sim, 1.23, {accelerate: true, right: true});
-  tick(sim, 5.5, {accelerate: true});
+  driveUntil(sim, {accelerate:true}, bus => bus.speed >= 14);
+  driveUntil(sim, {}, bus => bus.y <= 18);
+  driveUntil(sim, {right:true}, bus => bus.heading >= 1.55);
+  driveUntil(sim, {accelerate:true}, bus => bus.x > 108);
   assert.ok(sim.state.bus.x > 100);
   assert.equal(sim.state.district, 'Campagne');
   assert.ok(sim.state.distance > 120);
@@ -88,6 +100,22 @@ test('the driver can turn onto a second road that leads out into the countryside
   }
   assert.equal(connected.size, nodes.length);
   assert.ok(roads.length > nodes.length, 'the road network contains several independent cycles');
+});
+
+test('a quick correction is gentle at cruising speed and the wheel centres on release', () => {
+  const sim = create();
+  sim.state.cars = [];
+  tick(sim, 4, {accelerate:true});
+  const bus = sim.state.bus;
+  assert.equal(Math.round(bus.speed * 3.6), 90);
+  tick(sim, .1, {right:true});
+  assert.ok(bus.heading > 0 && bus.heading < .05, 'a tenth-second tap changes heading by less than three degrees');
+  assert.ok(bus.steer > 0 && bus.steer < .8);
+  tick(sim, .7);
+  assert.equal(bus.steer, 0);
+  const heading = bus.heading;
+  tick(sim, .1);
+  assert.equal(bus.heading, heading);
 });
 
 test('traffic approaches its signals, stops on red and leaves on green', () => {

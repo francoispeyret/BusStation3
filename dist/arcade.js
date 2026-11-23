@@ -5,8 +5,6 @@
     settings: '<path d="M10 3h4l.6 2.4 1.6.9 2.4-.7 2 3.5-1.8 1.7v2.4l1.8 1.7-2 3.5-2.4-.7-1.6.9L14 21h-4l-.6-2.4-1.6-.9-2.4.7-2-3.5 1.8-1.7v-2.4L3.4 9.1l2-3.5 2.4.7 1.6-.9z"/><circle cx="12" cy="12" r="3"/>',
     gamepad: '<path d="M7 6.5h10c2 0 3.3 1.5 3.8 3.7l1.1 5.1c.6 3-1.7 4.7-3.7 3.1L15 16h-6l-3.2 2.4c-2.1 1.6-4.3-.2-3.7-3.1l1.1-5.1C3.7 8 5 6.5 7 6.5Z"/><path d="M7.5 9.5v4m-2-2h4m6.5.9h.01M18 10.2h.01" stroke-width="2.5"/>',
     trophy: '<path d="M7.5 3.5h9v5.7a4.5 4.5 0 0 1-9 0zM7 5.5H3.5v2a4.2 4.2 0 0 0 4.8 4m8.7-6h3.5v2a4.2 4.2 0 0 1-4.8 4M12 14v4m-4 2.5h8m-6-2h4"/>',
-    volume: '<path d="m3 9 4-.1L12.5 4v16L7 15H3zM16 8a6 6 0 0 1 0 8m2.8-10.8a10 10 0 0 1 0 13.6"/>',
-    mute: '<path d="m3 9 4-.1L12.5 4v16L7 15H3zM16.5 9.5l5 5m0-5-5 5"/>',
     play: '<path d="M5.5 3.6a.7.7 0 0 1 1.1-.6l13.2 8.3a.8.8 0 0 1 0 1.4L6.6 21a.7.7 0 0 1-1.1-.6z" fill="currentColor"/>',
     pause: '<path d="M8 5v14m8-14v14" stroke-width="3.8"/>',
     pin: '<path d="M19 10c0 5-7 11-7 11S5 15 5 10a7 7 0 1 1 14 0Z"/><circle cx="12" cy="10" r="2.3"/>',
@@ -55,7 +53,6 @@
   const models = window.BusModels.models;
   const settings = window.BusSettings;
   const settingsButton = $('settings');
-  const detailLabels = {low:'Bas', medium:'Moyen', high:'Haut', extreme:'Extrême'};
   const demoPacer = settings.createFramePacer();
   const modelKey = 'busstation3.busModel';
   const benchmarkClock = $('benchmark-clock'), benchmarkProgress = $('benchmark-progress');
@@ -65,21 +62,15 @@
   let modelIndex = 0;
   let renderer, view = 'loading', panel = '', scoreId = '', scoreSaved = false, lastHud = -1;
   const heldControls = new Map();
-  let drag = null;
   let graphicsLost = false;
-  const volumeSlider = $('volume');
-  let volume = Number(volumeSlider.defaultValue);
-  let soundOn = true;
   try {
     const savedModel = localStorage.getItem(modelKey);
     modelIndex = Math.max(0, models.findIndex(model => model.id === savedModel));
-    soundOn = localStorage.getItem('busstation3.sound') !== '0';
-    const savedVolume = Number(localStorage.getItem('busstation3.volume'));
-    if (Number.isInteger(savedVolume) && savedVolume > 0 && savedVolume <= 100) volume = savedVolume;
   } catch {}
   const game = window.BusDrive.create({ onUpdate: update, onEvent: event, onFinish: finish });
-  game.setVolume(volume / 100);
-  game.setSound(soundOn);
+  window.BusControls.mountSound($('audio-controls'), {setEnabled:game.setSound, setVolume:game.setVolume}, () => {
+    if (game.state.status === 'running') cabinet.focus({preventScroll:true});
+  });
 
   const demo = {phase:'demo', introProgress:1, time:0, roadZ:0, speed:54, busModel:models[modelIndex].id, busOpacity:1,
     laneX:0, heading:0, objects:[], impacts:[], lap:1, lapProgress:0};
@@ -183,33 +174,6 @@
     });
   }
 
-  function refreshSound() {
-    const control = $('sound');
-    if (control.getAttribute('aria-pressed') !== String(soundOn)) {
-      control.innerHTML = icon(soundOn ? 'volume' : 'mute');
-      control.setAttribute('aria-pressed', String(soundOn));
-    }
-    control.setAttribute('aria-label', soundOn ? 'Son activé' : 'Son coupé');
-    control.title = soundOn ? 'Couper le son' : 'Activer le son';
-    const level = soundOn ? volume : 0;
-    volumeSlider.value = String(level);
-    volumeSlider.style.setProperty('--level', level + '%');
-    volumeSlider.setAttribute('aria-valuetext', level + ' %');
-    $('volume-readout').textContent = level + ' %';
-  }
-  function saveSound() {
-    try {
-      localStorage.setItem('busstation3.volume', String(volume));
-      localStorage.setItem('busstation3.sound', soundOn ? '1' : '0');
-    } catch {}
-  }
-  function setSoundEnabled(on) {
-    if (soundOn !== on) {
-      soundOn = on;
-      game.setSound(on);
-    }
-    refreshSound();
-  }
   function setText(el, value) { if (el.textContent !== value) el.textContent = value; }
   function setDial(dial, value, animate) {
     const formatter = dial === gauges.lap ? lapNumber : number;
@@ -367,28 +331,13 @@
     if (benchmark) suspendBenchmark();
     if (game.state.status === 'running') game.pause();
     openDialog('settings','settings','Paramètres',$('settings-panel').innerHTML);
-    function bindSlider(id, key, format) {
-      const slider = $(id), output = $(id + '-value'), values = settings.choices[key];
-      function display(value) {
-        slider.value = String(Number(slider.min) + values.indexOf(value));
-        const label = format(value);
-        slider.setAttribute('aria-valuetext', label);
-        output.value = label;
+    window.BusControls.mountGraphics($('graphics-controls'), (next, key) => {
+      if (key !== 'targetFps') {
+        renderer?.setGraphicsSettings(next);
+        previewSettings();
       }
-      display(settings.current[key]);
-      slider.addEventListener('input', () => {
-        const value = values[slider.valueAsNumber - Number(slider.min)];
-        const next = settings.set({[key]:value});
-        display(next[key]);
-        if (key !== 'targetFps') {
-          renderer?.setGraphicsSettings(next);
-          previewSettings();
-        }
-      });
-    }
-    bindSlider('graphics-detail', 'detail', value => detailLabels[value]);
-    bindSlider('target-fps', 'targetFps', value => value ? value + ' FPS' : 'Illimité');
-    bindSlider('resolution-scale', 'resolutionScale', value => value + '×');
+    });
+    $('graphics-detail').focus({preventScroll:true});
   }
 
   function benchmarkPanel() {
@@ -646,22 +595,6 @@
   $('scores-tab').addEventListener('click',() => scores());
   $('benchmark-tab').addEventListener('click',benchmarkPanel);
   $('benchmark-stop').addEventListener('click',() => leaveBenchmark());
-  $('sound').addEventListener('click',() => {
-    setSoundEnabled(!soundOn);
-    saveSound();
-  });
-  volumeSlider.addEventListener('input', () => {
-    const level = volumeSlider.valueAsNumber;
-    if (level > 0) {
-      volume = level;
-      game.setVolume(level / 100);
-    }
-    setSoundEnabled(level > 0);
-  });
-  volumeSlider.addEventListener('change', saveSound);
-  volumeSlider.addEventListener('pointerup', () => {
-    if (game.state.status === 'running') cabinet.focus({preventScroll:true});
-  });
   $('pause').addEventListener('click',pauseGame);
 
   const fullscreen = () => Boolean(document.fullscreenElement || cabinet.classList.contains('maximized'));
@@ -720,7 +653,7 @@
     $('brake').classList.toggle('is-held', braking);
   }
   function releaseControls() {
-    drag = null;
+    cancelSteeringDrag();
     heldControls.clear();
     applyControls();
   }
@@ -770,7 +703,6 @@
   document.addEventListener('keyup', e => releaseControl('key-' + (e.code || e.key.toLowerCase())));
 
   function finishPointer(e) {
-    if (drag?.id === e.pointerId) drag = null;
     releaseControl(e.pointerId);
   }
   for (const [id, input] of touchButtons) {
@@ -790,19 +722,7 @@
       window.setTimeout(() => releaseControl(source), 130);
     });
   }
-  road.addEventListener('pointerdown', e => {
-    if (e.button !== 0 || drag || game.state.status !== 'running') return;
-    e.preventDefault();
-    road.setPointerCapture(e.pointerId);
-    drag = { id: e.pointerId, x: e.clientX, range: Math.min(120, Math.max(48, road.clientWidth * .16)) };
-  });
-  road.addEventListener('pointermove', e => {
-    if (drag?.id !== e.pointerId) return;
-    const dx = e.clientX - drag.x;
-    const amount = Math.sign(dx) * Math.min(1, Math.max(0, Math.abs(dx) - 3) / drag.range);
-    setControl(e.pointerId, amount);
-  });
-  for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) road.addEventListener(name, finishPointer);
+  const cancelSteeringDrag = window.BusControls.bindSteeringDrag(road, () => game.state.status === 'running', setControl, releaseControl);
   road.addEventListener('webglcontextlost', () => {
     graphicsLost = true;
     syncDemo();
@@ -832,6 +752,5 @@
   });
   window.addEventListener('storage',e => { if (panel === 'scores' && e.key?.startsWith(rankingPrefix)) scores(); });
   showModelName();
-  refreshSound();
   loadArcade();
 })();

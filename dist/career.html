@@ -7,17 +7,28 @@
   <title>Carrière · Bus Station 3</title>
   <link rel="icon" href="assets/bus-mark.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css?v=19">
-  <link rel="stylesheet" href="career.css?v=1">
+  <link rel="stylesheet" href="career.css?v=2">
   <link rel="stylesheet" href="career-profiles.css?v=1">
-  <script defer src="mesh.js?v=3"></script>
+  <script defer src="mesh.js?v=4"></script>
   <script defer src="bus-models.js?v=1"></script>
+  <script defer src="biomes/catalog.js?v=2"></script>
+  <script defer src="biomes/shared-models.js?v=3"></script>
+  <script defer src="biomes/countryside.js?v=2"></script>
+  <script defer src="biomes/hills.js?v=2"></script>
+  <script defer src="biomes/village.js?v=2"></script>
+  <script defer src="biomes/city.js?v=2"></script>
   <script defer src="settings.js?v=1"></script>
+  <script defer src="game-controls.js?v=1"></script>
+  <script defer src="bus-handling.js?v=1"></script>
+  <script defer src="bus-audio.js?v=1"></script>
   <script defer src="assets/vendor/three-0.180.0.min.js"></script>
+  <script defer src="sky.js?v=1"></script>
+  <script defer src="three-lighting.js?v=3"></script>
   <script defer src="notices.js?v=1"></script>
   <script defer src="career-profiles.js?v=1"></script>
-  <script defer src="career-sim.js?v=1"></script>
-  <script defer src="career-render.js?v=1"></script>
-  <script defer src="career.js?v=1"></script>
+  <script defer src="career-sim.js?v=2"></script>
+  <script defer src="career-render.js?v=2"></script>
+  <script defer src="career.js?v=2"></script>
 </head>
 <body class="career-app">
   <svg class="career-icons" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -28,6 +39,7 @@
     <symbol id="ic-ticket" viewBox="0 0 24 24"><path d="M3 5h18v5a2 2 0 0 0 0 4v5H3v-5a2 2 0 0 0 0-4zm12 3v1m0 3v1m0 3v1"/></symbol>
     <symbol id="ic-people" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6m2 3a5 5 0 0 1 3 4v2"/></symbol>
     <symbol id="ic-speed" viewBox="0 0 24 24"><path d="M4 18a9 9 0 1 1 16 0M12 5v2m6 1-5 6"/><circle cx="12" cy="15" r="1.5"/></symbol>
+    <symbol id="ic-horn" viewBox="0 0 24 24"><path d="M4 11h6l9-5v13l-9-4H4zm3 4 1.5 5h3L10 15m12-6v5"/></symbol>
   </svg>
   <header class="career-header">
     <a href="index.html" class="career-home" aria-label="Bus Station 3, accueil"><span class="brand"><span class="wordmark">BUS STATION <b>3</b></span></span></a>
@@ -36,6 +48,7 @@
     <div id="driver-strip" hidden>
       <img id="driver-avatar" alt="" width="32" height="32">
       <span id="driver-name"></span>
+      <div id="audio-controls" class="audio-controls"></div>
       <button id="pause-service" class="career-tool" type="button" title="Pause (P)" aria-label="Mettre en pause"><svg class="icon" aria-hidden="true"><use href="#ic-pause"/></svg></button>
     </div>
   </header>
@@ -44,7 +57,7 @@
     <noscript>Active JavaScript pour prendre ton service.</noscript>
     <section id="service" aria-label="Service en carrière" hidden>
       <div id="city-stage">
-        <canvas id="city-view" tabindex="-1" aria-label="Conduite du bus. Les flèches dirigent le bus, E ouvre les portes et M ouvre le plan."></canvas>
+        <canvas id="city-view" tabindex="-1" aria-label="Conduite du bus. Braque avec les flèches ou en glissant sur la route. E ouvre les portes et M ouvre le plan."></canvas>
         <div class="stop-display">
           <span id="stop-number"></span>
           <div><span class="instrument-label" id="stop-label"></span><strong id="stop-name"></strong></div>
@@ -65,6 +78,7 @@
         <div class="instrument fare"><svg class="icon" aria-hidden="true"><use href="#ic-ticket"/></svg><div><span class="instrument-label">Caisse</span><strong><span id="balance">0</span> <small>€$</small></strong></div></div>
         <div class="instrument"><svg class="icon" aria-hidden="true"><use href="#ic-people"/></svg><div><span class="instrument-label">À bord</span><strong id="onboard">0</strong></div></div>
         <div class="instrument"><svg class="icon" aria-hidden="true"><use href="#ic-speed"/></svg><div><span class="instrument-label">Vitesse</span><strong><span id="bus-speed">0</span> <small>km/h</small></strong></div></div>
+        <button id="horn" class="career-tool" type="button" aria-label="Klaxonner" title="Klaxonner (H)"><svg class="icon" aria-hidden="true"><use href="#ic-horn"/></svg></button>
         <div class="district-indicator"><i aria-hidden="true"></i><span id="district"></span></div>
       </div>
       <div class="service-help"><span><kbd>↑</kbd> Accélérer</span><span><kbd>↓</kbd> Freiner / reculer</span><span><kbd>←</kbd><kbd>→</kbd> Braquer</span><span><kbd>E</kbd> Portes</span><span><kbd>M</kbd> Plan</span></div>
@@ -77,7 +91,11 @@
   <dialog id="service-menu" aria-labelledby="menu-title">
     <div class="service-dialog-body">
       <h2 id="menu-title">Service en pause</h2>
-      <div id="pause-details"><p id="service-takings"></p></div>
+      <div id="pause-details">
+        <p id="service-takings"></p>
+        <details id="service-settings"><summary>Réglages graphiques</summary><div class="display-settings" id="graphics-controls"></div></details>
+        <a class="audio-credits" href="assets/licenses/cinematic-audio.txt" target="_blank" rel="noopener">Crédits sonores</a>
+      </div>
       <div id="map-panel" hidden>
         <canvas id="network-map" aria-label="Plan des routes, des arrêts et de la position du bus"></canvas>
         <ol id="stop-list" aria-label="Arrêts du réseau"></ol>

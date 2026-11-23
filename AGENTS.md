@@ -19,8 +19,9 @@ Tous les chemins du tableau sont relatifs à `dist/`.
 | Pour modifier | Commencer par |
 | --- | --- |
 | Accueil, commandes clavier et tactiles, compteurs, pause ou classement | `index.html` et `style.css` pour la présentation, `arcade.js` pour les interactions. Le classement, le choix du bus et les réglages audio utilisent `localStorage`. |
-| Conduite, vitesse, collisions, bonus, tours ou sons | `drive.js`. `BusDrive.create()` gère la simulation. Dans `arcade.js`, le rappel `onUpdate` transmet l’état au moteur de rendu et actualise les compteurs. |
-| Caméra, éclairage, ombres ou effets de route | `world.js` gère la caméra et le repli Canvas 2D. Le rendu Three.js utilise WebGL 2, avec les objets de la scène dans `three-scene.js` et les lumières et ombres VSM dans `three-lighting.js`. |
+| Conduite et sons | `drive.js` gère la course arcade. `career-sim.js` gère la conduite libre, les arrêts et le trafic. Les deux modes utilisent `bus-handling.js` pour la direction et la boîte de vitesses, et `bus-audio.js` pour le moteur et les effets sonores. |
+| Interface carrière et réglages | `career.html`, `career.css` et `career.js` pour le service et le plan. `career-profiles.js` gère les cartes de service et les recettes. `game-controls.js` relie les commandes de volume et de qualité graphique aux deux modes. |
+| Caméra, éclairage, ombres ou effets de route | `world.js` et `three-scene.js` construisent la vue arcade. `career-render.js` construit la ville et la campagne. Les deux modes partagent le ciel dans `sky.js` et les lumières, matériaux et ombres VSM dans `three-lighting.js`. |
 | Flotte et géométrie des bus | `bus-models.js` pour le catalogue et les maillages, `mesh.js` pour les primitives communes. La sélection sur l’accueil se trouve dans `arcade.js`. |
 | Paysages, terrain et habitants | Un fichier par paysage dans `biomes/`. `biomes/route.js` calcule le relief, les transitions et la position des objets pour les deux moteurs. Pour ajouter un paysage, suivre [le guide des biomes](dist/biomes/README.md). |
 | Jauge de vie, polices, images ou sons | `heart-meter.js` et `heart-meter.css` pour les cœurs. Les ressources se trouvent dans `assets/` et leurs licences dans `assets/licenses/`. |

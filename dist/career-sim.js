@@ -3,6 +3,7 @@
 
   const fare = 3;
   const capacity = 24;
+  const topSpeed = 90 / 3.6;
   const coats = ['#ef795e', '#43ac9d', '#f2bc45', '#9475cc', '#507dd1', '#e796bd'];
   const carPaint = ['#f4b84a', '#539fac', '#ee795d', '#9f91cd', '#6896c7', '#eee6ce'];
   const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
@@ -227,13 +228,15 @@
     const bus = state.bus;
     if (state.doorsOpen) return;
     let acceleration = 0;
-    if (input.brake) acceleration = bus.speed > .15 ? -11 : -3.5;
-    else if (input.accelerate) acceleration = bus.speed < -.15 ? 9 : 5.3;
-    if (acceleration) bus.speed = clamp(bus.speed + acceleration * dt, -4.2, 18);
-    else bus.speed = Math.sign(bus.speed) * Math.max(0, Math.abs(bus.speed) - (1.25 + .008 * bus.speed * bus.speed) * dt);
-    const steering = Number(!!input.right) - Number(!!input.left);
-    bus.heading += steering * clamp(bus.speed * .145, -.67, 1.28) * dt;
-    const axis = forwardOf(bus.heading);
+    if (input.brake) acceleration = bus.speed > .15 ? -13.5 : -3.5;
+    else if (input.accelerate) acceleration = bus.speed < -.15 ? 9 : 6.6;
+    if (acceleration) bus.speed = clamp(bus.speed + acceleration * dt, -4.2, topSpeed);
+    else bus.speed = Math.sign(bus.speed) * Math.max(0, Math.abs(bus.speed) - (.85 + .003 * bus.speed * bus.speed) * dt);
+    const drag = clamp(input.steer || 0, -1, 1);
+    const steering = Math.max(drag, Number(!!input.right)) - Math.max(-drag, Number(!!input.left));
+    const yaw = window.BusHandling.steeringYaw(bus, steering, bus.speed * 3.6, bus.speed * dt, dt);
+    const axis = forwardOf(bus.heading + yaw / 2);
+    bus.heading += yaw;
     const previous = {x: bus.x, y: bus.y};
     bus.x += bus.speed * axis.x * dt;
     bus.y += bus.speed * axis.y * dt;
@@ -248,7 +251,7 @@
 
   function create({onEvent = () => {}} = {}) {
     const map = makeMap(), stops = makeStops(map);
-    const state = {map, stops, ...makeSignals(map), bus: {x: 5.2, y: 62, heading: 0, speed: 0},
+    const state = {map, stops, ...makeSignals(map), bus: {x: 5.2, y: 62, heading: 0, speed: 0, steer: 0},
       time: 0, distance: 0, earnings: 0, passengers: [], people: [], doorsOpen: false, serviceComplete: false,
       nearbyStop: stops[0], district: 'Centre-ville', collisions: 0};
     state.cars = makeTraffic(state);

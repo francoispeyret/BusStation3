@@ -198,5 +198,16 @@
     m.quad(...high,color);
   }
 
-  window.BusMesh = {Mesh,rgb,random,gpuGeometry,lettering,turn:TAU,mod,clamp01,basin,beam};
+  function threeGeometry(THREE,model) {
+    const {vertices,indices}=gpuGeometry(model);
+    const buffer=new THREE.InterleavedBuffer(vertices,6);
+    const geometry=new THREE.BufferGeometry();
+    geometry.setAttribute('position',new THREE.InterleavedBufferAttribute(buffer,3,0));
+    geometry.setAttribute('color',new THREE.InterleavedBufferAttribute(buffer,3,3));
+    if(indices) geometry.setIndex(new THREE.BufferAttribute(indices,1));
+    geometry.computeBoundingSphere();
+    return geometry;
+  }
+
+  window.BusMesh = {Mesh,rgb,random,gpuGeometry,threeGeometry,lettering,turn:TAU,mod,clamp01,basin,beam};
 })();

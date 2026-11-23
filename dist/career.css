@@ -160,6 +160,9 @@
 .service-dialog-body { padding:clamp(16px,3vw,27px); }
 .service-dialog-body h2 { margin:0 0 12px; font:clamp(1.3rem,3.3vw,1.9rem)/1.1 var(--display); }
 #pause-details p { color:#d1c5d5; }
+#service-settings { margin:14px 0 8px; }
+#service-settings summary { width:max-content; cursor:pointer; font-weight:700; }
+#pause-details .audio-credits { margin:0; }
 #network-map { display:block; width:100%; height:clamp(130px,40vh,350px); border-radius:10px; background:#282738; }
 #stop-list { display:grid; grid-template-columns:1fr 1fr; gap:6px 12px; list-style:none; padding:0; margin:12px 0; }
 #stop-list li { display:flex; align-items:center; gap:7px; font-size:.82rem; }
@@ -177,6 +180,9 @@
   .career-mode { padding-left:10px; font-size:.8rem; }
   #driver-name { max-width:9ch; font-size:.78rem; }
   #driver-avatar { width:26px; height:26px; }
+  #driver-strip { gap:5px; min-width:0; }
+  .career-header .volume-range { width:54px; }
+  .career-header .volume-readout { display:none; }
   .career-tool { width:30px; height:30px; margin:0; }
   .network-button { width:94px; }
   .network-button .map-label-end { display:none; }

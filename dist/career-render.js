@@ -2,15 +2,17 @@
 (() => {
   'use strict';
 
-  const {Mesh, random, lettering, beam, gpuGeometry} = window.BusMesh;
+  const {Mesh, random, lettering, beam, threeGeometry} = window.BusMesh;
   const TAU = Math.PI * 2;
-  const FLOOR = '#aec68b';
-  const ROAD = '#626976';
   const CREAM = '#fff0c5';
   const INK = '#283e50';
   const AQUA = '#359d96';
   const GOLD = '#ffcb64';
-  const GLAZING = '#7397a1';
+
+  const cityBiome = window.BusBiomes.definitions.get('city');
+  const ruralBiome = window.BusBiomes.definitions.get('hills');
+  const villageBiome = window.BusBiomes.definitions.get('village');
+  const models = window.BusBiomes.models;
 
   function segmentDistance(x, y, road) {
     const dx = road.b.x - road.a.x, dy = road.b.y - road.a.y;
@@ -45,7 +47,7 @@
         for (let d=13+rand()*4; d<len-7; d+=17+rand()*7) {
           const rx=road.a.x+d*ux, ry=road.a.y+d*uy;
           const urban=rx<townEdge, roll=rand();
-          const type=urban ? (roll<.75?'shop':'tree') : (roll<.16?'barn':roll<.32?'field':'tree');
+          const type=urban ? (roll<.75?'shop':'tree') : (roll<.16?'farmhouse':roll<.32?'field':'tree');
           const radius=type==='tree'?3:type==='field'?10:8;
           const offset=road.width/2+radius+(urban?3:4)+rand()*(urban?2:6);
           place(rx+nx*offset,ry+ny*offset,yaw,type,radius,Math.floor(rand()*30),.86+rand()*.25);
@@ -56,7 +58,7 @@
       for (let y=bounds.minY-40; y<bounds.maxY+40; y+=27) {
         const px=x+rand()*11, py=y+rand()*11, urban=px<townEdge;
         const roll=rand();
-        const type=urban?(roll<.42?'shop':'tree'):(roll<.55?'tree':roll<.94?'field':'barn');
+        const type=urban?(roll<.42?'shop':'tree'):(roll<.55?'tree':roll<.94?'field':'farmhouse');
         const radius=type==='tree'?3:type==='field'?10:8;
         place(px,py,0,type,radius,Math.floor(rand()*30),.83+rand()*.32);
       }
@@ -74,16 +76,17 @@
 
   function street(m,r) {
     const {a,b,width}=r, dx=b.x-a.x, dy=b.y-a.y, len=Math.hypot(dx,dy);
-    const ux=dx/len, uy=dy/len, nx=-uy, ny=ux, half=width/2, city=r.kind==='city';
+    const ux=dx/len, uy=dy/len, nx=-uy, ny=ux, half=width/2, urban=r.kind==='city';
+    const surface=urban ? cityBiome : ruralBiome;
     function stripe(from,to,offset,w,h,color) {
       groundQuad(m,a.x+ux*from+nx*offset,a.y+uy*from+ny*offset,
         a.x+ux*to+nx*offset,a.y+uy*to+ny*offset,w,h,color);
     }
-    stripe(-half,len+half,0,width+(city?5.6:2.5),.015,city?'#cec6b3':'#c4bc90');
-    stripe(-half,len+half,0,width,.035,ROAD);
+    stripe(-half,len+half,0,width+(urban?5.6:2.5),.015,surface.verge);
+    stripe(-half,len+half,0,width,.035,surface.roadColor);
     for (const side of [-1,1]) {
-      stripe(half+1,len-half-1,side*(half-.24),.14,.061,'#eee6cb');
-      if (city) {
+      stripe(half+1,len-half-1,side*(half-.24),.14,.061,'#f7db8c');
+      if (urban) {
         stripe(half+1,len-half-1,side*(half+.19),.32,.049,'#f1e5c9');
         for (let d=half+4;d<len-half-2;d+=5) {
           stripe(d,d+.065,side*(half+1.6),2.35,.052,'#aaa99e');
@@ -93,7 +96,7 @@
     for (let d=half+5;d<len-half-6;d+=9) {
       stripe(d,Math.min(d+3.3,len-half-5),0,.18,.069,'#f4ebc9');
     }
-    if (city && len>38) {
+    if (urban && len>38) {
       for (const d of [half+2,len-half-4.6]) {
         for (let off=-half+1.1;off<half-.4;off+=1.45) stripe(d,d+2.6,off,.65,.068,'#e2dfd4');
       }
@@ -101,83 +104,24 @@
   }
 
   function tree(m,variant) {
-    const pine=variant%4===0, trunk='#826d52';
-    const top=5.4+(variant%5)*.4;
-    m.ellipse(.72,.094,.9,2.35,2.85,'#819b73',10);
-    m.rings(0,0,0,[[.31,0,.29],[.21,top*.64,.18]],6,trunk);
-    if(pine) {
-      for(let i=0;i<3;i++) {
-        const width=2.1-i*.35;
-        m.rings(0,top*.22+i*top*.18,0,[[width,0,width*.92],[.06,top*.48,.06]],7,
-          ['#487d66','#52896a','#649976'][i],.35*i);
-      }
-    } else {
-      const leaves=['#759d65','#91a958','#799c57','#649675','#96ac62'][variant%5];
-      m.rings(0,top*.33,0,[[.9,0,.8],[2.2,.65,2.15],[2.45,2.1,2.25],[1.5,3.4,1.55],[.3,4.05,.4]],8,leaves,.22);
-    }
+    const kind = variant % 4 === 0 ? 0 : 1 + variant % 2;
+    window.BusCountryside.tree(m,0,0,5.8+variant%4,kind,random(variant+17));
+  }
+
+  function villageHouse(m,type,variant) {
+    // The arcade facades face -X. Career lots face the street along -Z.
+    const building = new Mesh();
+    villageBiome.drawRoadside(building,{x:0,y:0,side:1,type,variant},0);
+    m.instance(building,0,0,0,-Math.PI/2,1);
   }
 
   function shop(m,variant) {
-    const w=11+(variant%3), d=8+(variant%4), stories=1+(variant%4);
-    const top=3.7+stories*2.55, front=-d/2, shade=['#e2a886','#deca9e','#c6bbad','#a2c2b4','#e0b7a1'][variant%5];
-    const awning=['#cb715a','#549188','#da9e47','#7586a0'][variant%4];
-    m.quad([-w/2,.081,-d/2],[w/2+.8,.081,-d/2],[w/2+3.8,.081,d/2+2.4],[-w/2+2.7,.081,d/2+2.4],'#9ba38a');
-    m.box(0,0,0,w,.31,d,'#b1ada0');
-    m.box(0,.31,0,w,top-.31,d,shade);
-    m.box(0,top,0,w+.45,.32,d+.45,'#f3dfb8');
-    m.box(0,top+.31,0,w-.52,.13,d-.52,'#828787');
-    m.box(w*.18,top+.44,.4,1.65,.55,1.24,'#a8aeac');
-    m.box(-w*.21,top+.44,d*.18,.84,1.15,.82,'#ac8373');
-    for(const f of [-1,1]) {
-      const z=f*d/2;
-      for(let story=0;story<stories;story++) for(let i=0;i<4;i++) {
-        const x=(i-1.5)*w*.22, y=4.1+story*2.55;
-        m.box(x,y,z,1.27,1.52,.075,'#eadbc0');
-        m.box(x,y+.13,z+f*.047,.97,1.23,.055,'#567887');
-        m.box(x,y+.96,z+f*.08,.98,.23,.026,'#96b6bc');
-        m.box(x,y-.025,z+f*.04,1.48,.15,.26,'#eedcba');
-      }
-    }
-    for(const side of [-1,1]) for(let story=0;story<stories;story++) {
-      for(let i=-1;i<=1;i++) {
-        const z=i*d*.27, x=side*(w/2+.03), y=4.1+story*2.55;
-        m.box(x,y,z,.07,1.31,1.0,'#70909a');
-        m.box(x+side*.02,y-.06,z,.16,.13,1.24,'#e6d4b5');
-      }
-    }
-    m.box(0,2.94,front-.03,w-.2,.63,.18,awning);
-    const shopNames=['CAFÉ','HALLES','VÉLO','PRESSE','HÔTEL','FLEURS'];
-    const label=shopNames[variant%6].replace('Ô','O');
-    // The shop faces local -Z. Mirrored lettering reads correctly from the street.
-    lettering(m,label,0,3.43,front-.135,.085,CREAM,-1);
-    for(const side of [-1,1]) {
-      m.box(side*w*.29,.38,front-.026,w*.31,2.0,.16,'#38586b');
-      m.box(side*w*.29,.59,front-.117,w*.26,1.66,.04,GLAZING);
-      m.box(side*w*.29,1.96,front-.14,w*.26,.23,.018,'#a6c8c7');
-    }
-    m.box(0,.16,front-.06,1.25,2.47,.16,'#4b6871');
-    m.box(0,.87,front-.15,.87,1.51,.035,'#90b1b0');
-    for(let i=0;i<8;i++) {
-      const x=-w*.47+(i+.5)*w*.94/8;
-      m.box(x,2.68,front-.55,w*.94/8,.15,.97,i%2?CREAM:awning);
-      m.box(x,2.53,front-1.01,w*.94/8,.18,.10,i%2?CREAM:awning);
-    }
+    if (variant % 4 === 0) villageHouse(m,'shop',variant);
+    else models.get('cityTower')(m,variant);
   }
 
-  function barn(m,variant) {
-    const barnColor=variant%2?'#bc7158':'#d6bc8d';
-    m.box(.65,.075,.85,11.5,.04,8,'#94a37b');
-    m.box(0,0,0,10.3,3.55,7.4,barnColor);
-    const roof=variant%2?'#747f83':'#9f6354';
-    for(const side of [-1,1]) {
-      m.quad([-5.45,3.4,side*4.02],[5.45,3.4,side*4.02],[5.45,6.18,0],[-5.45,6.18,0],roof,side>0?.78:1);
-      m.tri([side*5.16,3.55,-3.7],[side*5.16,3.55,3.7],[side*5.16,6.03,0],barnColor);
-    }
-    m.box(0,0,-3.73,3.2,3,.10,'#695c51');
-    for(const x of [-2.92,2.92]) {
-      m.box(x,1.4,-3.74,1.4,1.2,.14,CREAM);
-      m.box(x,1.51,-3.83,1.13,.96,.05,GLAZING);
-    }
+  function farmhouse(m,variant) {
+    villageHouse(m,'home',variant);
   }
 
   function field(m,variant) {
@@ -186,11 +130,16 @@
     for(let i=-6;i<=6;i+=2) groundQuad(m,i,-7.7,i,7.7,.28,.10,variant%2?'#a0a25f':'#c29e64');
     for(let x=-8;x<=8;x+=4) m.box(x,0,-8,.18,1.1,.18,'#8a7658');
     m.box(0,.65,-8,16,.14,.12,'#aa926e');
+    if (variant % 3 === 0) {
+      const sheep = new Mesh();
+      models.get('sheep')(sheep,variant);
+      m.instance(sheep,2,.11,-4,1.35,1);
+      m.instance(sheep,-1,.11,-3,-.7,.88);
+    }
   }
 
   function station(m) {
     const stone='#dfbc91', brick='#ae7361', roof='#527882';
-    m.box(.6,.075,.8,18.7,.025,9.1,'#99a18a');
     m.box(0,0,0,18,.39,8.3,'#c5baa8');
     m.box(0,.39,0,17.8,5.42,8.2,stone);
     m.box(0,5.82,0,18.2,.3,8.6,'#efdbb5');
@@ -227,7 +176,6 @@
   }
 
   function mill(m) {
-    m.ellipse(1.5,.085,1.4,5.2,4.3,'#91a17d',12);
     m.rings(0,0,0,[[3.18,0,3.18],[2.0,8.8,2]],12,'#e2caa3');
     m.rings(0,8.8,0,[[2.64,0,2.64],[.13,2.0,.13]],12,'#915a4d');
     m.box(0,.18,-3.0,1.36,2.39,.15,'#6d5e51');
@@ -241,15 +189,6 @@
     }
   }
 
-  function lamp() {
-    const m=new Mesh();
-    m.rings(0,0,0,[[.23,0,.23],[.18,.48,.18],[.09,.54,.09],[.08,4.6,.08]],7,'#4b6668');
-    beam(m,[0,4.57,0],[-.58,4.95,0],.07,.05,'#4b6668');
-    m.box(-.74,4.81,0,.77,.12,.31,'#455b60');
-    m.box(-.74,4.76,0,.62,.055,.23,'#f6ddb0');
-    return m;
-  }
-
   function stopFurniture(m,index) {
     // Local +X is the pavement side and local +Z faces approaching vehicles.
     m.box(1.35,.08,1.7,3.3,.14,6.7,'#dbcdb0');
@@ -259,8 +198,9 @@
     m.box(2.58,1.7,1.32,.065,.085,4.23,'#e6d8b7');
     m.box(1.9,2.86,1.32,2.5,.21,5.0,'#347d77');
     m.box(1.9,3.07,1.32,2.52,.09,5.02,'#88b6a5');
-    for(const z of [.15,2.48]) m.box(2.0,.22,z,.35,.5,.16,INK);
-    m.box(2.0,.71,1.32,.69,.12,3.42,'#cc985c');
+    const bench = new Mesh();
+    models.get('cityBench')(bench);
+    m.instance(bench,2,.22,1.32,0,1.35);
     m.box(0,.08,0,.13,3.65,.13,'#3a5b5e');
     m.box(0,2.7,0,1.05,1.13,.17,INK);
     for(const side of [-1,1]) {
@@ -310,7 +250,9 @@
     m.box(0,2.5,0,.57,1.52,.31,'#293d49');
     for(const [i,a] of ['green','amber','red'].entries()) {
       const c=a===aspect?{green:'#66e0a0',amber:'#ffd466',red:'#ff705b'}[a]:'#455453';
+      const first=m.data.length;
       disk(m,.164,2.79+i*.465,.181,12,c);
+      if(a===aspect) for(let k=first+3;k<m.data.length;k+=6) m.data[k]+=8;
       m.box(0,3.0+i*.465,.115,.48,.055,.36,'#354a51');
     }
     return m;
@@ -318,7 +260,6 @@
 
   function carModel(color) {
     const m=new Mesh(); // front at -Z
-    m.ellipse(.22,.12,.24,1.23,2.45,'#4c5760');
     m.box(0,.3,0,1.82,.56,4.25,color);
     m.box(0,.86,.12,1.58,.70,2.23,'#3f606c');
     m.box(0,1.52,.16,1.56,.13,1.99,color);
@@ -326,27 +267,19 @@
     m.box(0,1.03,1.252,1.38,.39,.04,'#81a0a9');
     for(const side of [-1,1]) {
       for(const z of [-1.39,1.43]) m.box(side*.86,.13,z,.23,.59,.66,'#35414b');
+      const head=m.data.length;
       m.box(side*.74,.60,-2.14,.29,.15,.065,'#ffedb3');
+      const tail=m.data.length;
       m.box(side*.72,.60,2.14,.3,.17,.06,'#f37968');
+      for(let k=head+3;k<m.data.length;k+=6) m.data[k]+=k<tail?2:4;
       m.box(side*.807,.9,.15,.07,.61,.10,color);
     }
     return m;
   }
 
-  const skins=['#9b6652','#e5b28c','#bb8767','#825948'];
-  function personModel(color,variant) {
-    const m=new Mesh(),skin=skins[variant%4];
-    for(const side of [-1,1]) {
-      m.box(side*.13,.12,0,.17,.69,.22,'#425263');
-      m.box(side*.13,.06,-.055,.19,.14,.31,'#514a48');
-      beam(m,[side*.22,1.37,0],[side*.30,.94,-.05],.082,.068,color);
-      m.box(side*.30,.85,-.05,.115,.15,.12,skin);
-    }
-    m.rings(0,.75,0,[[.21,0,.15],[.28,.57,.17],[.19,.68,.13]],6,color,.42);
-    m.rings(0,1.40,0,[[.105,0,.10],[.195,.12,.15],[.18,.34,.15],[.12,.38,.11]],7,skin,.22);
-    m.box(0,1.66,.01,.34,.15,.29,variant%2?'#55453d':'#6a4d3b');
-    if(variant%3===0) m.box(0,1.77,-.065,.37,.07,.42,GOLD);
-    return m;
+  function serviceLight(time) {
+    const period=time/60;
+    return window.BusSky.lighting(Math.floor(period),period%1,.16);
   }
 
   function threeView(canvas,busId) {
@@ -356,34 +289,19 @@
     try { renderer=new T.WebGLRenderer({canvas,antialias:true,alpha:false,powerPreference:'high-performance'}); }
     catch { return null; }
     const scene=new T.Scene(), camera=new T.PerspectiveCamera(57,1,.18,770);
-    scene.background=new T.Color('#c8dedf');
-    scene.fog=new T.Fog('#cfddcf',75,265);
-    const material=new T.MeshBasicMaterial({vertexColors:true,side:T.DoubleSide});
+    const sky=window.BusSky.createSky(T,scene);
+    const lighting=window.BusThreeLighting.create(T,scene,renderer,{BEND_START:0,BEND_RATE:0,FAR:288,fixedWorld:true});
+    const {material}=lighting;
     const geometries=new Map(), dynamic=new Map();
-    const linear=v=>v<=.04045 ? v/12.92 : ((v+.055)/1.055)**2.4;
-    function geometry(model) {
-      const {vertices,indices}=gpuGeometry(model);
-      for(let i=3;i<vertices.length;i+=6) {
-        // Fleet lamp tags live above 1.0 in the red channel of the arcade meshes.
-        vertices[i]=linear(vertices[i]-2*Math.floor((vertices[i]+.1)/2));
-        vertices[i+1]=linear(vertices[i+1]);
-        vertices[i+2]=linear(vertices[i+2]);
-      }
-      const interleaved=new T.InterleavedBuffer(vertices,6), g=new T.BufferGeometry();
-      g.setAttribute('position',new T.InterleavedBufferAttribute(interleaved,3,0));
-      g.setAttribute('color',new T.InterleavedBufferAttribute(interleaved,3,3));
-      if(indices) g.setIndex(new T.BufferAttribute(indices,1));
-      g.computeBoundingSphere();
-      return g;
-    }
     function asset(key,build) {
-      if(!geometries.has(key)) geometries.set(key,geometry(build()));
+      if(!geometries.has(key)) geometries.set(key,threeGeometry(T,build()));
       return geometries.get(key);
     }
     const world=new T.Group();
     scene.add(world);
     function place(g,x,y,z,yaw=0,size=1) {
       const obj=new T.Mesh(g,material);
+      obj.castShadow=obj.receiveShadow=true;
       obj.position.set(x,y,z);
       obj.rotation.y=yaw;
       obj.scale.setScalar(size);
@@ -392,38 +310,18 @@
       world.add(obj);
       return obj;
     }
-    const skyGeometry=new T.SphereGeometry(680,24,12);
-    const skyMat=new T.ShaderMaterial({
-      vertexShader:'varying vec3 direction; void main(){direction=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
-      fragmentShader:`
-        varying vec3 direction;
-        void main(){
-          vec3 d=normalize(direction);
-          vec3 horizon=vec3(.84,.89,.86), zenith=vec3(.36,.69,.87);
-          vec3 paint=mix(horizon,zenith,smoothstep(-.05,.48,d.y));
-          float sun=dot(d,normalize(vec3(-.54,.31,-.79)));
-          paint+=vec3(.105,.071,.015)*pow(max(0.,sun),19.);
-          paint=mix(paint,vec3(1.,.94,.73),smoothstep(.9982,.9986,sun));
-          gl_FragColor=vec4(paint,1.);
-        }`,
-      side:T.BackSide,depthWrite:false
-    });
-    const sky=new T.Mesh(skyGeometry,skyMat);
-    sky.frustumCulled=false;
-    sky.renderOrder=-100;
-    scene.add(sky);
     const fleet=window.BusModels;
     const coach=fleet.models.find(f=>f.id===busId)||fleet.models[0];
     const bus=new T.Mesh(asset('coach',()=>fleet.mesh(coach.id)),material);
     bus.scale.set(2.7/coach.width,1.08,-9.2/coach.length);
+    bus.castShadow=bus.receiveShadow=true;
     scene.add(bus);
-    const shade=new Mesh();
-    shade.ellipse(.22,0,.20,1.65,4.95,'#47545c',18);
-    const busShadow=new T.Mesh(asset('busShade',()=>shade),material);
-    scene.add(busShadow);
+    const lampPosition=point=>[point[0]*bus.scale.x,point[1]*bus.scale.y,point[2]*-bus.scale.z];
+    const lamps={headlamp:lampPosition(coach.headlamp),taillamp:lampPosition(coach.taillamp)};
     const doorstep=new Mesh();
     doorstep.box(1.35,.28,-2.25,.57,.11,1.32,'#f0bd5d');
     const step=new T.Mesh(asset('door',()=>doorstep),material);
+    step.castShadow=step.receiveShadow=true;
     scene.add(step);
     const labels=[];
     function stopName(s) {
@@ -452,9 +350,9 @@
       const {map}=state, {bounds}=map;
       const base=new Mesh(), roads=new Mesh();
       const cx=(bounds.minX+bounds.maxX)/2, cy=(bounds.minY+bounds.maxY)/2;
-      groundQuad(base,cx,cy-600,cx,cy+600,1400,-.045,FLOOR);
+      groundQuad(base,cx,cy-600,cx,cy+600,1400,-.045,ruralBiome.grass);
       groundQuad(base,bounds.minX-140,bounds.minY-66,bounds.minX-140,bounds.maxY+66,
-        Math.max(1,2*(map.townEdge-bounds.minX+140)),-.025,'#b8bda1');
+        Math.max(1,2*(map.townEdge-bounds.minX+140)),-.025,cityBiome.grass);
       const fieldTones=['#b7c878','#cabc86','#99b780','#bec98b','#cdbc78'];
       const landscape=random(232);
       for(let x=map.townEdge+7;x<bounds.maxX+75;x+=54) {
@@ -467,70 +365,91 @@
       place(asset('floor',()=>base),0,0,0);
       for(const r of map.roads) street(roads,r);
       place(asset('roads',()=>roads),0,0,0);
-      // Low mountain ranges beyond the playable streets keep the horizon grounded.
-      const hills=new Mesh(), rand=random(29);
-      for(let i=0;i<45;i++) {
-        const a=i*TAU/45, radius=295+rand()*115;
-        const x=cx+Math.sin(a)*(radius+(bounds.maxX-bounds.minX)*.38);
-        const z=cy+Math.cos(a)*(radius+(bounds.maxY-bounds.minY)*.35);
-        const w=50+rand()*65,h=16+rand()*46;
-        hills.rings(x,-1,z,[[w,0,w*.70],[w*.61,h*.5,w*.52,3],[w*.18,h,w*.15,9]],
-          8,['#9bad91','#97ada4','#a1b69b'][i%3],a);
+      // Each edge faces the same arcade mountain range outside the road network.
+      const mountains=asset('skyline',window.BusSky.backdrop);
+      for(let i=0;i<4;i++) {
+        const angle=i*Math.PI/2;
+        const edge=i%2 ? bounds.maxX-cx : bounds.maxY-cy;
+        const horizon=place(mountains,cx+Math.sin(angle)*edge,-6,cy+Math.cos(angle)*edge,angle);
+        horizon.castShadow=horizon.receiveShadow=false;
+        horizon.material=lighting.backdropMaterial;
+        horizon.renderOrder=-100;
       }
-      place(asset('hills',()=>hills),0,0,0);
-      const builders={tree,shop,barn,field,station,mill};
+      // Upload fixed scenery in street-sized tiles. Both VSM cameras and the
+      // driving camera can cull tiles without a draw call per tree or façade.
+      const tiles=new Map(), prototypes=new Map();
+      function addToTile(model,x,z,yaw,size=1) {
+        const ox=Math.floor(x/48)*48, oz=Math.floor(z/48)*48, key=ox+','+oz;
+        if(!tiles.has(key)) tiles.set(key,{model:new Mesh(),x:ox,z:oz});
+        tiles.get(key).model.instance(model,x-ox,0,z-oz,yaw,size);
+      }
+      const builders={tree,shop,farmhouse,field,station,mill};
       for(const l of lots) {
         const variant=l.variant%(l.type==='shop'?12:6);
-        const g=asset(l.type+variant,()=>{const m=new Mesh(); builders[l.type](m,variant); return m;});
-        place(g,l.x,0,l.y,l.yaw,l.size);
+        const key=l.type+variant;
+        if(!prototypes.has(key)) {
+          const m=new Mesh();
+          builders[l.type](m,variant);
+          prototypes.set(key,m);
+        }
+        addToTile(prototypes.get(key),l.x,l.y,l.yaw,l.size);
       }
-      const lamppost=asset('lamp',lamp);
+      const lamppost=new Mesh();
+      models.get('cityLamp')(lamppost);
       for(const r of map.roads) {
         if(r.kind!=='city') continue;
         const dx=r.b.x-r.a.x,dy=r.b.y-r.a.y,len=Math.hypot(dx,dy);
         for(let d=16, side=1;d<len-11;d+=25,side=-side) {
           const right=side*(r.width/2+1.72),x=r.a.x+(d*dx-dy*right)/len,y=r.a.y+(d*dy+dx*right)/len;
           if([...state.stops,...state.lights,...state.signs].some(s=>Math.hypot(x-s.x,y-s.y)<5)) continue;
-          place(lamppost,x,0,y,Math.atan2(-dx*side,-dy*side));
+          addToTile(lamppost,x,y,Math.atan2(-dx*side,-dy*side));
         }
       }
       state.stops.forEach((s,i)=>{
-        const g=asset('shelter'+i,()=>{const m=new Mesh(); stopFurniture(m,i); return m;});
-        place(g,s.x,0,s.y,-s.heading);
+        const m=new Mesh();
+        stopFurniture(m,i);
+        addToTile(m,s.x,s.y,-s.heading);
         stopName(s);
       });
-      for(const s of state.signs) place(asset('sign'+s.kind,()=>signModel(s.kind)),s.x,0,s.y,-s.heading);
+      for(const s of state.signs) addToTile(signModel(s.kind),s.x,s.y,-s.heading);
+      for(const [key,tile] of tiles) place(asset('tile'+key,()=>tile.model),tile.x,0,tile.z);
       previousTime=null;
       initialized=true;
     }
     function actor(id,g,x,y,z,heading) {
       let obj=dynamic.get(id);
-      if(!obj) { obj=new T.Mesh(g,material); scene.add(obj); dynamic.set(id,obj); }
+      if(!obj) {
+        obj=new T.Mesh(g,material);
+        obj.castShadow=obj.receiveShadow=true;
+        scene.add(obj); dynamic.set(id,obj);
+      }
       obj.geometry=g; obj.position.set(x,y,z); obj.rotation.y=-heading; obj.visible=true;
     }
-    function idVariant(id) {
-      let v=0;
-      for(const ch of String(id)) v=(v+ch.charCodeAt(0))%12;
-      return v;
-    }
     function passenger(p,heading,walking,time) {
-      const v=idVariant(p.id);
-      const key='p'+p.color+(v%4);
-      const jump=walking?.065*Math.abs(Math.sin(time*12+v)):0;
-      actor('p'+p.id,asset(key,()=>personModel(p.color,v)),p.x,.16+jump,p.y,heading);
+      const variant=p.id%3;
+      const geometry=asset('walker'+p.color+variant,()=>{
+        const model=new Mesh();
+        models.get('walker')(model,variant,p.color);
+        return model;
+      });
+      const step=walking ? .045*Math.abs(Math.sin(time*6+p.id)) : 0;
+      // The shared walker faces +Z while career headings point north along -Z.
+      actor('p'+p.id,geometry,p.x,.22+step,p.y,heading+Math.PI);
     }
     const target=new T.Vector3();
-    let width=0,height=0;
+    const context=renderer.getContext();
+    const viewport=context.getParameter(context.MAX_VIEWPORT_DIMS);
+    const limit=context.getParameter(context.MAX_RENDERBUFFER_SIZE);
+    const sight=new T.Vector3();
     function draw(state,lots) {
       if(!initialized) init(state,lots);
       const w=canvas.clientWidth,h=canvas.clientHeight;
       if(!w||!h) return;
-      if(w!==width||h!==height) {
-        width=w; height=h;
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,1.65));
-        renderer.setSize(w,h,false);
-        camera.aspect=w/h; camera.updateProjectionMatrix();
-      }
+      const settings=window.BusSettings.current;
+      const scale=Math.min(settings.resolutionScale,limit/w,limit/h,viewport[0]/w,viewport[1]/h);
+      const width=Math.max(1,Math.round(w*scale)),height=Math.max(1,Math.round(h*scale));
+      if(canvas.width!==width||canvas.height!==height) renderer.setSize(width,height,false);
+      if(camera.aspect!==w/h) { camera.aspect=w/h; camera.updateProjectionMatrix(); }
       const b=state.bus;
       const dt=previousTime===null ? 0 : Math.max(0,Math.min(.12,state.time-previousTime));
       if(previousTime===null || state.time<previousTime) cameraHeading=b.heading;
@@ -542,10 +461,16 @@
       camera.position.set(b.x-sx*back+cz*lateral,eyeHeight,b.y+cz*back+sx*lateral);
       target.set(b.x+sx*(portrait?4.0:6.0),1.10,b.y-cz*(portrait?4.0:6.0));
       camera.lookAt(target);
-      sky.position.copy(camera.position);
+      sight.subVectors(target,camera.position);
+      const cam={a:Math.atan2(sight.x,-sight.z),pitch:Math.atan2(-sight.y,Math.hypot(sight.x,sight.z)),
+        f:1/Math.tan(T.MathUtils.degToRad(camera.fov/2)),aspect:camera.aspect};
+      const light=serviceLight(state.time);
+      sky.update(cam,light);
       bus.position.set(b.x,.12,b.y);
       bus.rotation.y=-b.heading;
-      busShadow.position.set(b.x,.095,b.y); busShadow.rotation.y=-b.heading;
+      lighting.update({light,cam,bus:lamps,pose:{x:b.x,y:bus.position.y,z:-b.y,pitch:0,yaw:b.heading,roll:0},
+        d:0,time:state.time,lapBiomes:state.map,busOpacity:1,level:window.BusSky.graphicsLevels[settings.detail]});
+      for(const label of labels) label.mat.color.fromArray(light.tint).convertSRGBToLinear();
       step.position.copy(bus.position); step.rotation.y=-b.heading; step.visible=state.doorsOpen;
       for(const obj of dynamic.values()) obj.visible=false;
       for(const [i,s] of state.lights.entries()) {
@@ -553,7 +478,10 @@
       }
       for(const c of state.cars) actor('car'+c.id,asset('car'+c.color,()=>carModel(c.color)),c.x,.10,c.y,c.heading);
       for(const s of state.stops) for(const p of s.waiting) passenger(p,s.heading-Math.PI/2,false,state.time);
-      for(const p of state.people) passenger(p,b.heading+(p.phase==='alighting'?Math.PI/2:-Math.PI/2),true,state.time);
+      for(const p of state.people) {
+        const heading=Math.atan2(p.end.x-p.start.x,p.start.y-p.end.y);
+        passenger(p,heading,true,state.time);
+      }
       // Retire models of boarded passengers. Cars, signals and waiting people remain pooled by id.
       for(const [id,obj] of dynamic) if(!obj.visible) { scene.remove(obj); dynamic.delete(id); }
       renderer.render(scene,camera);
@@ -561,16 +489,15 @@
     function dispose() {
       for(const g of geometries.values()) g.dispose();
       for(const l of labels) {l.texture.dispose(); l.mat.dispose(); l.geom.dispose();}
-      material.dispose(); skyGeometry.dispose(); skyMat.dispose(); renderer.dispose();
+      lighting.dispose(); sky.dispose(); renderer.dispose();
       dynamic.clear(); geometries.clear();
     }
     return {draw,dispose,mode:'3d'};
   }
 
-  function surface(canvas) {
+  function surface(canvas,dpr=Math.min(window.devicePixelRatio||1,2)) {
     const w=canvas.clientWidth, h=canvas.clientHeight;
     if(!w||!h) return null;
-    const dpr=Math.min(window.devicePixelRatio||1,2);
     if(canvas.width!==Math.round(w*dpr)||canvas.height!==Math.round(h*dpr)) {
       canvas.width=Math.round(w*dpr); canvas.height=Math.round(h*dpr);
     }
@@ -600,7 +527,6 @@
   function vehicle(ctx,v,bus,body) {
     ctx.save(); ctx.translate(v.x,v.y); ctx.rotate(v.heading);
     const w=bus?2.7:1.85, h=bus?9.2:4.25;
-    rect(ctx,-w/2+.19,-h/2+.32,w,h,'#41545c');
     rect(ctx,-w/2,-h/2,w,h,body);
     rect(ctx,-w*.41,-h*.42,w*.82,h*.18,'#4e7282');
     rect(ctx,-w*.41,h*.25,w*.82,h*.13,'#719ca5');
@@ -612,16 +538,76 @@
     ctx.restore();
   }
   function overhead(canvas,busId) {
+    const footprints={tree:[3,3,6],tower:[9,10,19],shop:[9,6,7],station:[18,9,9],
+      farmhouse:[7.4,6,6],mill:[6,6,10]};
     const busColor=({alpin:'#d96b59',lagon:'#66b3a7',ecolier:'#e8b44c',
       nocturne:'#7385a4',imperiale:'#b95655'})[busId]||'#d96b59';
+    const coach=window.BusModels.models.find(m=>m.id===busId)||window.BusModels.models[0];
+    const beamSlices=[-1,1].map(side=>Array.from({length:33},(_,i)=>{
+      const f=56*i/32;
+      return {x:side*(coach.headlamp[0]*2.7/coach.width+.055*f),z:f+coach.headlamp[2]*9.2/coach.length,
+        width:.26+.18*f,power:window.BusThreeLighting.beamPower(f,-.12-1.08*coach.headlamp[1])};
+    }));
+    const beamPaths=new Map();
+    function headlightFootprint(layers) {
+      if(!beamPaths.has(layers)) {
+        const paths=[];
+        for(const slices of beamSlices) window.BusThreeLighting.beamContours(slices,layers,1,0,()=>0,outline=>{
+          const path=new Path2D();
+          for(const [x,,z] of outline) path.lineTo(x,-z);
+          path.closePath(); paths.push(path);
+        });
+        beamPaths.set(layers,paths);
+      }
+      return beamPaths.get(layers);
+    }
     function draw(state,lots) {
-      const s=surface(canvas);
+      const s=surface(canvas,window.BusSettings.current.resolutionScale);
       if(!s) return;
       const {ctx,w,h}=s, b=state.bus, px=Math.max(3.7,Math.min(w/58,h/63,11));
-      rect(ctx,0,0,w,h,FLOOR);
+      rect(ctx,0,0,w,h,ruralBiome.grass);
       ctx.save(); ctx.translate(w/2,h*.68); ctx.scale(px,px); ctx.rotate(-b.heading); ctx.translate(-b.x,-b.y);
       rect(ctx,state.map.bounds.minX-120,state.map.bounds.minY-120,
-        state.map.townEdge-state.map.bounds.minX+120,state.map.bounds.maxY-state.map.bounds.minY+240,'#bbbea4');
+        state.map.townEdge-state.map.bounds.minX+120,state.map.bounds.maxY-state.map.bounds.minY+240,cityBiome.grass);
+      ctx.lineCap='square';
+      for(const r of state.map.roads) line(ctx,r.a,r.b,r.width+3.6,r.kind==='city'?cityBiome.verge:ruralBiome.verge);
+      for(const r of state.map.roads) line(ctx,r.a,r.b,r.width,r.kind==='city'?cityBiome.roadColor:ruralBiome.roadColor);
+      ctx.setLineDash([3.1,5.5]);
+      for(const r of state.map.roads) line(ctx,r.a,r.b,.17,'#e8dfc3');
+      ctx.setLineDash([]);
+      const light=serviceLight(state.time);
+      const dir=light.direction, rayX=-dir.x/dir.y, rayY=dir.z/dir.y;
+      const viewRange=Math.hypot(w,h)/px;
+      // Each roof and its projected footprint form one convex shadow on the flat map.
+      function shadow(x,y,yaw,width,length,height) {
+        const cs=Math.cos(yaw), sn=Math.sin(yaw);
+        const dx=height*(cs*rayX+sn*rayY), dy=height*(-sn*rayX+cs*rayY);
+        const edges=[dy<0,dx>0,dy>0,dx<0], hw=width/2, hl=length/2;
+        ctx.beginPath();
+        for(let i=0;i<4;i++) {
+          const left=i===0||i===3 ? -hw : hw, top=i<2 ? -hl : hl;
+          for(const shifted of [edges[(i+3)%4],edges[i]]) {
+            const u=left+(shifted?dx:0), v=top+(shifted?dy:0);
+            ctx.lineTo(x+cs*u-sn*v,y+sn*u+cs*v);
+          }
+        }
+        ctx.closePath(); ctx.fill();
+      }
+      ctx.fillStyle='#313b52';
+      ctx.globalAlpha=.44*light.shadow;
+      for(const lot of lots) {
+        if(lot.type==='field'||Math.hypot(lot.x-b.x,lot.y-b.y)>viewRange+130) continue;
+        const dims=footprints[lot.type==='shop' && lot.variant%4!==0 ? 'tower' : lot.type];
+        shadow(lot.x,lot.y,-lot.yaw,dims[0]*lot.size,dims[1]*lot.size,dims[2]*lot.size);
+      }
+      for(const c of state.cars) shadow(c.x,c.y,c.heading,1.82,4.25,1.6);
+      for(const stop of state.stops) {
+        shadow(stop.x+1.9*Math.cos(stop.heading),stop.y+1.9*Math.sin(stop.heading),stop.heading,2.2,5,2.9);
+        for(const p of stop.waiting) shadow(p.x,p.y,0,.45,.35,1.7);
+      }
+      for(const p of state.people) shadow(p.x,p.y,0,.45,.35,1.7);
+      shadow(b.x,b.y,b.heading,2.7,9.2,3);
+      ctx.globalAlpha=1;
       for(const l of lots) {
         if(Math.hypot(l.x-b.x,l.y-b.y)>Math.hypot(w,h)/px+12) continue;
         ctx.save(); ctx.translate(l.x,l.y); ctx.rotate(-l.yaw); ctx.scale(l.size,l.size);
@@ -641,22 +627,21 @@
           dot(ctx,0,0,3.08,'#e5cd9f'); dot(ctx,0,0,2.73,'#9d6756');
           line(ctx,{x:-2.9,y:-2.1},{x:2.9,y:-2.5},.28,CREAM);
         } else {
-          rect(ctx,-5,-3.8,11.8,9.55,'#939987');
-          rect(ctx,-5.5,-4.4,11.6,9.3,l.type==='barn'?'#995f50':'#cdb998');
-          rect(ctx,-5,-3.92,10.6,8.23,l.type==='barn'?'#b57b65':'#929998');
-          if(l.type==='shop') {
-            for(let i=0;i<8;i++) rect(ctx,-5.45+i*1.43,-5.18,1.43,.96,i%2?CREAM:'#ad7862');
-            rect(ctx,1.0,.7,2.1,1.5,'#b9bdb3');
+          const tower=l.type==='shop' && l.variant%4!==0;
+          if(tower) {
+            rect(ctx,-4.5,-5,9,10,'#c5b19d');
+            rect(ctx,-4.2,-4.7,8.4,9.4,'#73848a');
+            rect(ctx,-2.9,-3.1,5.8,6.2,l.variant%3===1?'#b39779':'#607a83');
+          } else {
+            const shopfront=l.type==='shop', half=shopfront ? 4.5 : 3.7;
+            const tiles=l.variant%3===2 && !shopfront ? '#718187' : '#bb6550';
+            rect(ctx,-half,-3,half*2,6,tiles);
+            rect(ctx,-half,.1,half*2,2.9,'#33303b33');
+            if(shopfront) for(let i=0;i<9;i++) rect(ctx,-half+i,-3.9,1,1.12,i%2?CREAM:'#b95746');
           }
         }
         ctx.restore();
       }
-      ctx.lineCap='square';
-      for(const r of state.map.roads) line(ctx,r.a,r.b,r.width+3.6,r.kind==='city'?'#dad0b6':'#c4bc90');
-      for(const r of state.map.roads) line(ctx,r.a,r.b,r.width,ROAD);
-      ctx.setLineDash([3.1,5.5]);
-      for(const r of state.map.roads) line(ctx,r.a,r.b,.17,'#e8dfc3');
-      ctx.setLineDash([]);
       for(const stop of state.stops) {
         ctx.save(); ctx.translate(stop.x,stop.y); ctx.rotate(stop.heading);
         rect(ctx,-.3,-1.1,3.3,5.6,'#ded0b4');
@@ -680,6 +665,20 @@
       vehicle(ctx,b,true,busColor);
       for(const p of state.people) {
         dot(ctx,p.x,p.y,.45,p.color); dot(ctx,p.x-.02,p.y-.06,.17,'#c49a78');
+      }
+      ctx.restore();
+      ctx.save();
+      ctx.globalCompositeOperation='multiply';
+      const tint=light.tint.map(channel=>Math.min(255,Math.round(channel*255)));
+      rect(ctx,0,0,w,h,'rgb('+tint.join(',')+')');
+      if(light.night>0) {
+        const level=window.BusSky.graphicsLevels[window.BusSettings.current.detail];
+        const layers=Math.round(20*level.shadowLayers);
+        ctx.globalCompositeOperation='source-over';
+        ctx.translate(w/2,h*.68); ctx.scale(px,px);
+        ctx.fillStyle='#f7dc9c';
+        ctx.globalAlpha=light.night*(.40+.12*level.lighting)/layers;
+        for(const path of headlightFootprint(layers)) ctx.fill(path);
       }
       ctx.restore();
       // Keep stop identifiers upright as the map underneath follows the bus.

@@ -11,10 +11,10 @@
   <link rel="stylesheet" href="style.css?v=19">
   <link rel="stylesheet" href="heart-meter.css">
   <script src="assets/vendor/number-flow-0.6.2.js" defer></script>
-  <script src="mesh.js?v=3" defer></script>
+  <script src="mesh.js?v=4" defer></script>
   <script src="bus-models.js?v=1" defer></script>
   <script src="biomes/catalog.js?v=2" defer></script>
-  <script src="biomes/shared-models.js?v=2" defer></script>
+  <script src="biomes/shared-models.js?v=3" defer></script>
   <script src="biomes/countryside.js?v=2" defer></script>
   <script src="biomes/hills.js?v=2" defer></script>
   <script src="biomes/village.js?v=2" defer></script>
@@ -26,16 +26,20 @@
   <script src="biomes/city.js?v=2" defer></script>
   <script src="biomes/snow.js?v=1" defer></script>
   <script src="settings.js?v=1" defer></script>
-  <script src="drive.js?v=21" defer></script>
+  <script src="bus-handling.js?v=1" defer></script>
+  <script src="bus-audio.js?v=1" defer></script>
+  <script src="drive.js?v=22" defer></script>
   <script src="biomes/route.js?v=2" defer></script>
   <script src="assets/vendor/three-0.180.0.min.js" defer></script>
-  <script src="three-lighting.js?v=2" defer></script>
-  <script src="three-scene.js?v=1" defer></script>
-  <script src="world.js?v=25" defer></script>
+  <script src="three-lighting.js?v=3" defer></script>
+  <script src="three-scene.js?v=2" defer></script>
+  <script src="sky.js?v=1" defer></script>
+  <script src="world.js?v=26" defer></script>
   <script src="heart-meter.js" defer></script>
   <script src="benchmark.js?v=2" defer></script>
   <script src="notices.js?v=1" defer></script>
-  <script src="arcade.js?v=17" defer></script>
+  <script src="game-controls.js?v=1" defer></script>
+  <script src="arcade.js?v=18" defer></script>
 </head>
 <body>
   <section class="loading-screen" id="loading-screen" aria-labelledby="loading-title">
@@ -61,11 +65,7 @@
         <button id="benchmark-tab" class="navitem" aria-haspopup="dialog"><i data-icon="gauge"></i><span>Benchmark</span></button>
       </nav>
       <div class="sound-wrap" id="header-audio">
-        <div class="audio-controls" id="audio-controls">
-          <button id="sound" class="sound" aria-label="Son activé" aria-pressed="true" title="Couper le son"><i data-icon="volume"></i></button>
-          <input id="volume" class="volume-range" type="range" min="0" max="100" step="1" value="60" aria-label="Volume du jeu" aria-valuetext="60 %">
-          <span class="volume-readout" id="volume-readout" aria-hidden="true">60 %</span>
-        </div>
+        <div class="audio-controls" id="audio-controls"></div>
       </div>
     </div>
   </header>
@@ -149,27 +149,7 @@
     </div>
   </main>
   <template id="settings-panel">
-    <div class="display-settings">
-      <div class="setting-row">
-        <label for="graphics-detail">Détails graphiques</label>
-        <output id="graphics-detail-value" for="graphics-detail" aria-hidden="true">Moyen</output>
-        <input id="graphics-detail" type="range" min="0" max="3" step="1" value="1" aria-valuetext="Moyen" data-initial-focus>
-        <div class="setting-marks" aria-hidden="true"><span>Bas</span><span>Moyen</span><span>Haut</span><span>Extrême</span></div>
-      </div>
-      <div class="setting-row">
-        <label for="target-fps">FPS cible</label>
-        <output id="target-fps-value" for="target-fps" aria-hidden="true">Illimité</output>
-        <input id="target-fps" type="range" min="0" max="5" step="1" value="5" aria-valuetext="Illimité" aria-describedby="target-fps-note">
-        <div class="setting-marks" aria-hidden="true"><span>30</span><span>60</span><span>90</span><span>120</span><span>240</span><span>Illimité</span></div>
-        <p class="setting-note" id="target-fps-note">La fréquence de l’écran limite le nombre d’images affichées.</p>
-      </div>
-      <div class="setting-row">
-        <label for="resolution-scale">Échelle de résolution</label>
-        <output id="resolution-scale-value" for="resolution-scale" aria-hidden="true">1×</output>
-        <input id="resolution-scale" type="range" min="1" max="2" step="1" value="1" aria-valuetext="1 fois">
-        <div class="setting-marks" aria-hidden="true"><span>1×</span><span>2×</span></div>
-      </div>
-    </div>
+    <div class="display-settings" id="graphics-controls"></div>
     <div class="modal-buttons"><button type="button" class="primary" data-action="close">Terminé</button></div>
   </template>
   <template id="benchmark-intro">
