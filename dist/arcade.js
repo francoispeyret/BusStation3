@@ -36,18 +36,11 @@
   const noticeStatus = $('notice-status');
   const noticeTitles = {cone: 'Oups !', barrier: 'Boum !', oil: 'Ça glisse !', pothole: 'Crevé !', rocket: 'Fusée !'};
   const notices = window.BusNotices.create(notice, noticeStatus);
-  const gauges = Object.fromEntries(['score','distance','lap','speed'].map(key => [key, $(key)]));
-  const lapNumber = new Intl.NumberFormat('fr-FR', {minimumIntegerDigits: 2});
-  for (const dial of document.querySelectorAll('.reading number-flow')) {
-    if (typeof dial.update !== 'function') continue;
-    dial.locales = 'fr-FR';
-    if (dial === gauges.lap) dial.format = {minimumIntegerDigits: 2};
-    dial.transformTiming = {duration: 135, easing: 'ease-out'};
-    dial.opacityTiming = {duration: 90, easing: 'ease-out'};
-    dial.setAttribute('role', 'img');
-    setDial(dial, Number(dial.textContent), false);
-    dial.replaceChildren();
-  }
+  const {mountCounter} = window.BusControls;
+  const gauges = {
+    score:mountCounter($('score')), distance:mountCounter($('distance')),
+    lap:mountCounter($('lap'), 1, {minimumIntegerDigits:2}), speed:mountCounter($('speed'))
+  };
   const rankingPrefix = 'busstation3.result.';
   const memoryScores = new Map();
   const models = window.BusModels.models;
@@ -175,24 +168,12 @@
   }
 
   function setText(el, value) { if (el.textContent !== value) el.textContent = value; }
-  function setDial(dial, value, animate) {
-    const formatter = dial === gauges.lap ? lapNumber : number;
-    if (typeof dial.update !== 'function') {
-      setText(dial, formatter.format(value));
-      return;
-    }
-    dial.animated = animate;
-    if (dial.value !== value) {
-      dial.update(value);
-      dial.setAttribute('aria-label', formatter.format(value));
-    }
-  }
   function hud(state) {
     const rolling = state.status === 'running' && state.time > 0;
-    setDial(gauges.score, state.score, rolling);
-    setDial(gauges.distance, Math.floor(state.distance), rolling);
-    setDial(gauges.lap, state.lap, rolling);
-    setDial(gauges.speed, Math.round(state.speed), rolling);
+    gauges.score(state.score, rolling);
+    gauges.distance(Math.floor(state.distance), rolling);
+    gauges.lap(state.lap, rolling);
+    gauges.speed(Math.round(state.speed), rolling);
     const canSpin = state.phase === 'driving' && state.jump?.long && !state.jump.spinDirection;
     const effectLabel = canSpin ? 'Braque pour un 360°'
       : state.rocketRemaining > 0 ? 'Fusée · ' + Math.ceil(state.rocketRemaining) + ' m'
@@ -475,21 +456,14 @@
       && !matchMedia('(prefers-reduced-motion: reduce)').matches;
     const resultDials = [[scoreDial, state.score], [$('result-distance'), metres]];
     for (const [dial, value] of resultDials) {
-      if (typeof dial.update !== 'function') continue;
-      dial.locales = 'fr-FR';
+      const update = mountCounter(dial, roll ? 0 : value);
+      if (!roll) continue;
       dial.transformTiming = {duration: 830, easing: 'cubic-bezier(.22,.68,.2,1)'};
       dial.opacityTiming = {duration: 240, easing: 'ease-out'};
-      dial.setAttribute('role', 'img');
-      setDial(dial, roll ? 0 : value, false);
       dial.setAttribute('aria-label', number.format(value));
-      dial.replaceChildren();
-    }
-    if (roll) {
       // Let the dialog's fade reveal the zeroes before the reels start turning.
       setTimeout(() => {
-        for (const [dial, value] of resultDials) {
-          if (dial.isConnected && modal.open) setDial(dial, value, true);
-        }
+        if (dial.isConnected && modal.open) update(value);
       }, 160);
     }
     if (!scoreSaved) {

@@ -4,6 +4,7 @@
   const fare = 3;
   const capacity = 24;
   const topSpeed = 90 / 3.6;
+  const coneLimit = 6;
   const coats = ['#ef795e', '#43ac9d', '#f2bc45', '#9475cc', '#507dd1', '#e796bd'];
   const carPaint = ['#f4b84a', '#539fac', '#ee795d', '#9f91cd', '#6896c7', '#eee6ce'];
   const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
@@ -35,7 +36,8 @@
     const byId = Object.fromEntries(nodes.map(node => [node.id, node]));
     const roads = [];
     function street(from, to, kind) {
-      roads.push({a: byId[from], b: byId[to], kind, width: kind === 'city' ? 17 : 13});
+      const urban = kind === 'city';
+      roads.push({a: byId[from], b: byId[to], kind, width: urban ? 17 : 13, vergeWidth: urban ? 2.8 : 1.25});
     }
     for (const row of [['NW', 'N', 'NE'], ['W', 'C', 'E'], ['SW', 'S', 'SE'],
       ['NW', 'W', 'SW'], ['N', 'C', 'S'], ['NE', 'E', 'SE']]) {
@@ -218,7 +220,9 @@
       const t = clamp(((position.x - road.a.x) * dx + (position.y - road.a.y) * dy) / (dx*dx + dy*dy), 0, 1);
       const x = road.a.x + t*dx, y = road.a.y + t*dy;
       const lateral = Math.hypot(x - position.x, y - position.y);
-      const over = lateral - (road.width / 2 - 1.1);
+      // The centre can cross a city curb, leaving half the bus width to the outer edge.
+      const limit = road.width / 2 + (road.kind === 'city' ? road.vergeWidth - 1.35 : -1.1);
+      const over = lateral - limit;
       if (over < best) { best = over; nearest = {x, y, lateral, over}; }
     }
     return nearest;
@@ -249,12 +253,79 @@
     state.distance += distance(bus, previous);
   }
 
-  function create({onEvent = () => {}} = {}) {
+  function coneSites(map, stops, random) {
+    const sites = [];
+    for (const road of map.roads) {
+      const axis = direction(road.a, road.b), length = distance(road.a, road.b);
+      for (const fraction of [.25, .5, .75]) {
+        for (const side of [-1, 1]) {
+          const along = length * (fraction + (random() - .5) * .10);
+          const lateral = side * road.width * (.32 + .07 * random());
+          const point = offset(road.a, axis, along, lateral);
+          if (stops.some(stop => distance(point, stop) < 21)) continue;
+          if (map.nodes.some(node => distance(point, node) < 18)) continue;
+          sites.push({...point, road, lateral, heading:Math.atan2(axis.x, -axis.y)});
+        }
+      }
+    }
+    return sites;
+  }
+
+  function pickConeSite(state, sites, random, initial) {
+    const options = sites.filter(site => {
+      const range = distance(site, state.bus);
+      if (range < (initial ? 26 : 85)) return false;
+      if (!initial && range < 210) {
+        const ahead = forwardOf(state.bus.heading);
+        if ((site.x - state.bus.x) * ahead.x + (site.y - state.bus.y) * ahead.y > range * .35) return false;
+      }
+      if (state.cars.some(car => distance(car, site) < 6)) return false;
+      return state.cones.every(other => other.road !== site.road && distance(other, site) >= 34);
+    });
+    return options[Math.floor(random() * options.length)];
+  }
+
+  function updateCones(state, sites, random, onEvent) {
+    const bus = state.bus;
+    for (const cone of state.cones) {
+      if (cone.hit) {
+        if (state.time < cone.respawnAt) continue;
+        const site = pickConeSite(state, sites, random, false);
+        if (site) Object.assign(cone, site, {hit:null});
+        else cone.respawnAt = state.time + 2;
+        continue;
+      }
+      // Each physics substep moves at most 0.84 m. Test the cone's footprint
+      // against the oriented coach, including its front and rear corners.
+      const dx = cone.x - bus.x, dy = cone.y - bus.y;
+      if (Math.abs(bus.speed) < .01 || dx*dx + dy*dy > 30) continue;
+      const heading = bus.heading + (bus.speed < 0 ? Math.PI : 0);
+      const forward = forwardOf(heading);
+      const along = dx * forward.x + dy * forward.y;
+      const across = dy * forward.x - dx * forward.y;
+      if (Math.hypot(Math.max(0, Math.abs(along) - 4.6), Math.max(0, Math.abs(across) - 1.35)) > .46) continue;
+      const side = across < 0 ? -1 : 1;
+      const axis = direction(cone.road.a, cone.road.b);
+      const vergeSide = side * Math.sign(axis.x * forward.x + axis.y * forward.y);
+      const toVerge = Math.max(2.2, cone.road.width / 2 - vergeSide * cone.lateral + 1.9);
+      cone.hit = {start:state.time, duration:.95, speed:Math.abs(bus.speed), heading, side, toVerge};
+      cone.respawnAt = state.time + cone.hit.duration + 8 + random() * 8;
+      bus.speed *= .75;
+      onEvent({type:'cone', message:'Cône renversé · Bus ralenti'});
+    }
+  }
+
+  function create({onEvent = () => {}, random = Math.random} = {}) {
     const map = makeMap(), stops = makeStops(map);
     const state = {map, stops, ...makeSignals(map), bus: {x: 5.2, y: 62, heading: 0, speed: 0, steer: 0},
       time: 0, distance: 0, earnings: 0, passengers: [], people: [], doorsOpen: false, serviceComplete: false,
-      nearbyStop: stops[0], district: 'Centre-ville', collisions: 0};
+      nearbyStop: stops[0], district: 'Centre-ville', collisions: 0, cones: []};
     state.cars = makeTraffic(state);
+    const sites = coneSites(map, stops, random);
+    for (let id = 0; id < coneLimit; id++) {
+      const site = pickConeSite(state, sites, random, true);
+      if (site) state.cones.push({id, ...site, hit:null});
+    }
     updateLights(state);
     let serial = 0, activeStop = null, lastCollision = -Infinity;
     function queuePassenger(stop, index) {
@@ -373,6 +444,7 @@
         }
         car.contact = hit;
       }
+      updateCones(state, sites, random, onEvent);
       setNearbyStop();
     }
 

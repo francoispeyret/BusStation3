@@ -130,5 +130,30 @@
     }
     return cancel;
   }
-  window.BusControls = {mountSound, mountGraphics, bindSteeringDrag};
+  function mountCounter(dial, initial = 0, format) {
+    const formatter = new Intl.NumberFormat('fr-FR', format);
+    if (typeof dial.update !== 'function') {
+      function writeText(value) {
+        const label = formatter.format(value);
+        if (dial.textContent !== label) dial.textContent = label;
+      }
+      writeText(initial);
+      return writeText;
+    }
+    dial.locales = 'fr-FR';
+    dial.format = format;
+    dial.transformTiming = {duration:135, easing:'ease-out'};
+    dial.opacityTiming = {duration:90, easing:'ease-out'};
+    dial.setAttribute('role', 'img');
+    function update(value, animate = true) {
+      dial.animated = animate;
+      if (dial.value === value) return;
+      dial.update(value);
+      dial.setAttribute('aria-label', formatter.format(value));
+    }
+    update(initial, false);
+    dial.replaceChildren();
+    return update;
+  }
+  window.BusControls = {mountSound, mountGraphics, bindSteeringDrag, mountCounter};
 })();

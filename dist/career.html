@@ -7,9 +7,11 @@
   <title>Carrière · Bus Station 3</title>
   <link rel="icon" href="assets/bus-mark.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css?v=19">
-  <link rel="stylesheet" href="career.css?v=2">
+  <link rel="stylesheet" href="career.css?v=3">
   <link rel="stylesheet" href="career-profiles.css?v=1">
+  <script defer src="assets/vendor/number-flow-0.6.2.js"></script>
   <script defer src="mesh.js?v=4"></script>
+  <script defer src="traffic-cone.js?v=1"></script>
   <script defer src="bus-models.js?v=1"></script>
   <script defer src="biomes/catalog.js?v=2"></script>
   <script defer src="biomes/shared-models.js?v=3"></script>
@@ -18,7 +20,7 @@
   <script defer src="biomes/village.js?v=2"></script>
   <script defer src="biomes/city.js?v=2"></script>
   <script defer src="settings.js?v=1"></script>
-  <script defer src="game-controls.js?v=1"></script>
+  <script defer src="game-controls.js?v=2"></script>
   <script defer src="bus-handling.js?v=1"></script>
   <script defer src="bus-audio.js?v=1"></script>
   <script defer src="assets/vendor/three-0.180.0.min.js"></script>
@@ -26,9 +28,9 @@
   <script defer src="three-lighting.js?v=3"></script>
   <script defer src="notices.js?v=1"></script>
   <script defer src="career-profiles.js?v=1"></script>
-  <script defer src="career-sim.js?v=2"></script>
-  <script defer src="career-render.js?v=2"></script>
-  <script defer src="career.js?v=2"></script>
+  <script defer src="career-sim.js?v=3"></script>
+  <script defer src="career-render.js?v=3"></script>
+  <script defer src="career.js?v=3"></script>
 </head>
 <body class="career-app">
   <svg class="career-icons" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -75,9 +77,9 @@
         </div>
       </div>
       <div class="instruments">
-        <div class="instrument fare"><svg class="icon" aria-hidden="true"><use href="#ic-ticket"/></svg><div><span class="instrument-label">Caisse</span><strong><span id="balance">0</span> <small>€$</small></strong></div></div>
-        <div class="instrument"><svg class="icon" aria-hidden="true"><use href="#ic-people"/></svg><div><span class="instrument-label">À bord</span><strong id="onboard">0</strong></div></div>
-        <div class="instrument"><svg class="icon" aria-hidden="true"><use href="#ic-speed"/></svg><div><span class="instrument-label">Vitesse</span><strong><span id="bus-speed">0</span> <small>km/h</small></strong></div></div>
+        <div class="instrument fare"><svg class="icon" aria-hidden="true"><use href="#ic-ticket"/></svg><div><span class="instrument-label">Caisse</span><div class="reading"><strong><number-flow id="balance">0</number-flow></strong><small>€$</small></div></div></div>
+        <div class="instrument"><svg class="icon" aria-hidden="true"><use href="#ic-people"/></svg><div><span class="instrument-label">À bord</span><div class="reading"><strong><number-flow id="onboard">0</number-flow></strong></div></div></div>
+        <div class="instrument"><svg class="icon" aria-hidden="true"><use href="#ic-speed"/></svg><div><span class="instrument-label">Vitesse</span><div class="reading"><strong><number-flow id="bus-speed">0</number-flow></strong><small>km/h</small></div></div></div>
         <button id="horn" class="career-tool" type="button" aria-label="Klaxonner" title="Klaxonner (H)"><svg class="icon" aria-hidden="true"><use href="#ic-horn"/></svg></button>
         <div class="district-indicator"><i aria-hidden="true"></i><span id="district"></span></div>
       </div>
@@ -104,6 +106,7 @@
         <button class="primary" id="resume-service" type="button">Reprendre le volant</button>
         <button class="secondary" id="menu-map" type="button">Voir le plan</button>
         <button class="secondary" id="change-profile" type="button">Changer de profil</button>
+        <button class="secondary" id="exit-career" type="button">Quitter la carrière</button>
       </div>
     </div>
   </dialog>

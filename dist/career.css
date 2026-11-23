@@ -132,7 +132,6 @@
 .instrument { display:flex; align-items:center; gap:10px; }
 .instrument>.icon { color:var(--lilac); width:25px; height:25px; }
 .instrument strong { display:block; font:clamp(17px,2vw,26px)/1.1 var(--display); }
-.instrument small { font:700 .68em var(--sans); }
 .instrument.fare strong,.instrument.fare>.icon { color:var(--green); }
 .district-indicator { display:flex; align-items:center; gap:8px; margin-left:auto; font-weight:700; font-size:.9rem; }
 .district-indicator i { width:9px; height:9px; border-radius:50%; background:var(--green); box-shadow:0 0 0 3px #83d8bd22; }
@@ -168,7 +167,8 @@
 #stop-list li { display:flex; align-items:center; gap:7px; font-size:.82rem; }
 #stop-list .stop-index { display:grid; place-items:center; width:21px; height:21px; flex:none; border:1px solid #92889a; border-radius:50%; font-size:.7rem; font-weight:700; }
 #stop-list .requested .stop-index { color:#302536; border-color:var(--yellow); background:var(--yellow); }
-.service-menu-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:18px; }
+.service-menu-actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:18px; }
+.show-map #resume-service { grid-column:1 / -1; }
 .service-menu-actions button { min-height:38px; padding:10px 13px; font-size:.86rem; }
 @media (pointer:coarse), (max-width:700px) {
   .career-touch { display:flex; }

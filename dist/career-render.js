@@ -82,7 +82,7 @@
       groundQuad(m,a.x+ux*from+nx*offset,a.y+uy*from+ny*offset,
         a.x+ux*to+nx*offset,a.y+uy*to+ny*offset,w,h,color);
     }
-    stripe(-half,len+half,0,width+(urban?5.6:2.5),.015,surface.verge);
+    stripe(-half,len+half,0,width+2*r.vergeWidth,.015,surface.verge);
     stripe(-half,len+half,0,width,.035,surface.roadColor);
     for (const side of [-1,1]) {
       stripe(half+1,len-half-1,side*(half-.24),.14,.061,'#f7db8c');
@@ -282,6 +282,17 @@
     return window.BusSky.lighting(Math.floor(period),period%1,.16);
   }
 
+  function conePose(cone,time) {
+    const hit=cone.hit;
+    if(!hit) return {x:cone.x,y:cone.y,heading:cone.heading,lift:0,pitch:0,roll:0,alpha:1};
+    const age=time-hit.start;
+    if(age>=hit.duration) return null;
+    const f=window.BusCone.flight(age/hit.duration,age,hit.side,hit.speed,hit.toVerge);
+    const sx=Math.sin(hit.heading),cz=Math.cos(hit.heading);
+    return {x:cone.x+f.across*cz+f.forward*sx, y:cone.y+f.across*sx-f.forward*cz,
+      heading:hit.heading+f.turn, lift:f.lift, pitch:f.pitch, roll:f.roll, alpha:f.alpha};
+  }
+
   function threeView(canvas,busId) {
     const T=window.THREE;
     if (!T) return null;
@@ -292,7 +303,7 @@
     const sky=window.BusSky.createSky(T,scene);
     const lighting=window.BusThreeLighting.create(T,scene,renderer,{BEND_START:0,BEND_RATE:0,FAR:288,fixedWorld:true});
     const {material}=lighting;
-    const geometries=new Map(), dynamic=new Map();
+    const geometries=new Map(), dynamic=new Map(), coneFades=new Map();
     function asset(key,build) {
       if(!geometries.has(key)) geometries.set(key,threeGeometry(T,build()));
       return geometries.get(key);
@@ -424,6 +435,7 @@
         scene.add(obj); dynamic.set(id,obj);
       }
       obj.geometry=g; obj.position.set(x,y,z); obj.rotation.y=-heading; obj.visible=true;
+      return obj;
     }
     function passenger(p,heading,walking,time) {
       const variant=p.id%3;
@@ -477,6 +489,18 @@
         actor('light'+i,asset('light'+s.aspect,()=>signalModel(s.aspect)),s.x,0,s.y,s.heading);
       }
       for(const c of state.cars) actor('car'+c.id,asset('car'+c.color,()=>carModel(c.color)),c.x,.10,c.y,c.heading);
+      for(const cone of state.cones) {
+        const p=conePose(cone,state.time);
+        if(!p) continue;
+        const obj=actor('cone'+cone.id,asset('cone',window.BusCone.model),p.x,.08+p.lift,p.y,p.heading);
+        obj.rotation.set(-p.pitch,-p.heading,p.roll,'YZX');
+        if(p.alpha<1) {
+          if(!coneFades.has(cone.id)) coneFades.set(cone.id,lighting.createMaterial({transparent:true}));
+          obj.material=coneFades.get(cone.id);
+          obj.material.opacity=p.alpha;
+        } else obj.material=material;
+        obj.castShadow=p.alpha>.4;
+      }
       for(const s of state.stops) for(const p of s.waiting) passenger(p,s.heading-Math.PI/2,false,state.time);
       for(const p of state.people) {
         const heading=Math.atan2(p.end.x-p.start.x,p.start.y-p.end.y);
@@ -488,6 +512,7 @@
     }
     function dispose() {
       for(const g of geometries.values()) g.dispose();
+      for(const fade of coneFades.values()) fade.dispose();
       for(const l of labels) {l.texture.dispose(); l.mat.dispose(); l.geom.dispose();}
       lighting.dispose(); sky.dispose(); renderer.dispose();
       dynamic.clear(); geometries.clear();
@@ -570,7 +595,7 @@
       rect(ctx,state.map.bounds.minX-120,state.map.bounds.minY-120,
         state.map.townEdge-state.map.bounds.minX+120,state.map.bounds.maxY-state.map.bounds.minY+240,cityBiome.grass);
       ctx.lineCap='square';
-      for(const r of state.map.roads) line(ctx,r.a,r.b,r.width+3.6,r.kind==='city'?cityBiome.verge:ruralBiome.verge);
+      for(const r of state.map.roads) line(ctx,r.a,r.b,r.width+2*r.vergeWidth,r.kind==='city'?cityBiome.verge:ruralBiome.verge);
       for(const r of state.map.roads) line(ctx,r.a,r.b,r.width,r.kind==='city'?cityBiome.roadColor:ruralBiome.roadColor);
       ctx.setLineDash([3.1,5.5]);
       for(const r of state.map.roads) line(ctx,r.a,r.b,.17,'#e8dfc3');
@@ -600,6 +625,12 @@
         const dims=footprints[lot.type==='shop' && lot.variant%4!==0 ? 'tower' : lot.type];
         shadow(lot.x,lot.y,-lot.yaw,dims[0]*lot.size,dims[1]*lot.size,dims[2]*lot.size);
       }
+      const cones=state.cones.map(cone=>conePose(cone,state.time)).filter(Boolean);
+      for(const p of cones) {
+        ctx.globalAlpha=.44*light.shadow*p.alpha;
+        shadow(p.x+rayX*p.lift,p.y+rayY*p.lift,p.heading,.95,.9,1.15);
+      }
+      ctx.globalAlpha=.44*light.shadow;
       for(const c of state.cars) shadow(c.x,c.y,c.heading,1.82,4.25,1.6);
       for(const stop of state.stops) {
         shadow(stop.x+1.9*Math.cos(stop.heading),stop.y+1.9*Math.sin(stop.heading),stop.heading,2.2,5,2.9);
@@ -660,6 +691,20 @@
       for(const sign of state.signs) {
         dot(ctx,sign.x,sign.y,.65,sign.kind==='crossing'?'#649aaf':'#cd6257');
         dot(ctx,sign.x,sign.y,.37,CREAM);
+      }
+      for(const p of cones) {
+        ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(p.heading);
+        ctx.globalAlpha=p.alpha;
+        rect(ctx,-.475,-.45,.95,.9,'#c25a3a');
+        const dx=-Math.sin(p.roll)*Math.cos(p.pitch),dy=-Math.sin(p.pitch);
+        ctx.lineCap='round';
+        line(ctx,{x:0,y:0},{x:.5*dx,y:.5*dy},.74,'#fa793e');
+        dot(ctx,.5*dx,.5*dy,.37,'#fa793e');
+        line(ctx,{x:.5*dx,y:.5*dy},{x:.69*dx,y:.69*dy},.52,'#fff3d2');
+        dot(ctx,.69*dx,.69*dy,.26,'#fff3d2');
+        line(ctx,{x:.69*dx,y:.69*dy},{x:1.15*dx,y:1.15*dy},.29,'#fa793e');
+        dot(ctx,1.15*dx,1.15*dy,.16,'#fa793e');
+        ctx.restore();
       }
       for(const c of state.cars) vehicle(ctx,c,false,c.color);
       vehicle(ctx,b,true,busColor);

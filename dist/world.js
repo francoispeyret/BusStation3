@@ -233,13 +233,9 @@
 
   function prop(type) {
     if(type==='rocket'||type==='rocketMotor'||type==='rocketFlame') return rocketModel(type);
+    if(type==='cone') return window.BusCone.model();
     const m=new Mesh();
-    if(type==='cone') {
-      m.box(0,.01,0,.95,.12,.90,'#c25a3a');
-      m.quad([-.475,.01,-.45],[-.475,.01,.45],[.475,.01,.45],[.475,.01,-.45],'#854632');
-      for(const [y,top,r,r2,c] of [[.13,.50,.37,.26,'#fa793e'],[.50,.69,.26,.19,'#fff3d2'],[.69,1.15,.19,.056,'#fa793e']])
-        m.rings(0,0,0,[[r,y,r],[r2,top,r2]],8,c);
-    } else if(type==='barrier') {
+    if(type==='barrier') {
       for(const side of [-1,1]) {
         m.box(side*.86,.05,0,.15,1.08,.20,'#7b685c');
         m.box(side*.86,.02,0,.42,.1,.85,'#715d51');
@@ -348,10 +344,8 @@
       }
       if(hit.type==='cone') {
         const toVerge=Math.max(2.2,ROAD-hit.side*(hit.x-roadX(hit.z))+1.9);
-        const across=hit.side*toVerge*p*(1.5-.5*p);
-        const forward=hit.speed*age*(1.04-.20*p);
-        const lift=8*p-6.4*p*p;
-        part('cone',across,lift,forward,hit.side*p*2.4,-hit.side*p*5.9,p*3.4,1,1,1,1-ease((p-.52)/.48));
+        const f=window.BusCone.flight(p,age,hit.side,hit.speed,toVerge);
+        part('cone',f.across,f.lift,f.forward,f.turn,f.roll,f.pitch,1,1,1,f.alpha);
       } else if(hit.type==='barrier') {
         const fall=ease((p-.08)/.43), crush=ease(p/.40);
         const pitch=fall*Math.PI*.5, depth=1-.46*crush;

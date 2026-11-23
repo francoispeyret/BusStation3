@@ -7,6 +7,10 @@
   const screen = $('city-view');
   const notices = window.BusNotices.create($('fare-notice'), $('fare-status'));
   const format = new Intl.NumberFormat('fr-FR');
+  const {mountCounter} = window.BusControls;
+  const balanceDial = mountCounter($('balance'));
+  const onboardDial = mountCounter($('onboard'));
+  const speedDial = mountCounter($('bus-speed'));
   const pacer = window.BusSettings.createFramePacer();
   const audio = window.BusAudio.create();
   const keys = new Map(Object.entries({
@@ -42,7 +46,7 @@
     return Math.hypot(sim.state.bus.x - stop.x, sim.state.bus.y - stop.y);
   }
 
-  function refreshInstruments() {
+  function refreshInstruments(animate = true) {
     const {stops, nearbyStop, passengers, bus, doorsOpen, serviceComplete, district} = sim.state;
     const requested = passengers.length && stops.find(stop => stop.id === passengers[0].destination);
     const closest = nearbyStop || stops.reduce((best, stop) => stopDistance(best) < stopDistance(stop) ? best : stop);
@@ -52,9 +56,9 @@
     write('stop-name', target.name);
     write('stop-distance', Math.round(stopDistance(target)) + ' m');
     write('district', district);
-    write('balance', format.format(driver.balance));
-    write('onboard', passengers.length);
-    write('bus-speed', Math.abs(Math.round(bus.speed * 3.6)));
+    balanceDial(driver.balance, animate);
+    onboardDial(passengers.length, animate);
+    speedDial(Math.abs(Math.round(bus.speed * 3.6)), animate);
     $('door-prompt').hidden = !nearbyStop && !doorsOpen;
     if (nearbyStop) {
       const moving = Math.abs(bus.speed) > .8;
@@ -80,6 +84,9 @@
     } else if (event.type === 'collision') {
       audio.effect('collision');
       notices.push({type:'collision', title:'Accrochage !', message:'Reprends le volant'});
+    } else if (event.type === 'cone') {
+      audio.effect('cone');
+      notices.push({type:'cone', title:'Oups !', message:event.message});
     } else if (event.type === 'doors' && sim.state.doorsOpen) {
       airBrake();
     } else if (event.type === 'hint') {
@@ -149,7 +156,7 @@
     try { busId = localStorage.getItem('busstation3.busModel'); } catch {}
     renderer ??= window.CareerRender.create(screen, {busId});
     window.scrollTo(0, 0);
-    refreshInstruments();
+    refreshInstruments(false);
     run();
     audio.horn();
   }
@@ -225,6 +232,10 @@
   $('menu-map').addEventListener('click', () => openMenu(true));
   $('resume-service').addEventListener('click', resume);
   $('change-profile').addEventListener('click', endService);
+  $('exit-career').addEventListener('click', () => {
+    endService();
+    window.location.assign('index.html');
+  });
   menu.addEventListener('cancel', event => { event.preventDefault(); resume(); });
   window.addEventListener('resize', () => {
     if (sim && menu.open && !$('map-panel').hidden) renderer.drawMap($('network-map'), sim.state);

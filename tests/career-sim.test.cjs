@@ -5,11 +5,11 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const context = vm.createContext({window: {}});
-for (const file of ['bus-handling.js', 'career-sim.js']) {
+for (const file of ['mesh.js', 'bus-handling.js', 'career-sim.js']) {
   const filename = path.join(__dirname, '../dist', file);
   vm.runInContext(fs.readFileSync(filename, 'utf8'), context, {filename});
 }
-const create = context.window.CareerSim.create;
+const create = options => context.window.CareerSim.create({random:context.window.BusMesh.random(17), ...options});
 
 function tick(sim, seconds, controls) {
   const frames = Math.round(seconds * 60);
@@ -116,6 +116,26 @@ test('a quick correction is gentle at cruising speed and the wheel centres on re
   const heading = bus.heading;
   tick(sim, .1);
   assert.equal(bus.heading, heading);
+});
+
+test('the bus can cut across a city sidewalk in a turn while staying inside the block boundary', () => {
+  const sim = create();
+  sim.state.cars = [];
+  const bus = sim.state.bus;
+  Object.assign(bus, {x:8, y:18, speed:9});
+  let furthestFromAsphalt = 0;
+  driveUntil(sim, {right:true}, () => {
+    // The two streets meet at (0, 0), each with 8.5 m of asphalt on either side.
+    const lateral = Math.min(Math.abs(bus.x), Math.abs(bus.y));
+    furthestFromAsphalt = Math.max(furthestFromAsphalt, lateral - 8.5);
+    return bus.heading >= 1.52;
+  });
+  assert.ok(furthestFromAsphalt > 1, 'the bus centre crosses the curb during the right turn');
+  assert.ok(bus.x > 20 && Math.abs(bus.y) < 8.5 && bus.speed > 5, 'the bus rejoins the street without stalling');
+
+  Object.assign(bus, {x:7, y:42, heading:Math.PI / 2, speed:12, steer:0});
+  tick(sim, 2, {accelerate:true});
+  assert.ok(Math.abs(bus.x + 1.35 - (8.5 + 2.8)) < .01, 'the sidewalk has an outer limit between intersections');
 });
 
 test('traffic approaches its signals, stops on red and leaves on green', () => {
