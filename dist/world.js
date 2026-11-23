@@ -734,7 +734,7 @@
     const scene=new THREE.Scene();
     const view=new THREE.PerspectiveCamera(60,1,.28,312);
     const sky=createSky(THREE,scene);
-    const lighting=window.BusThreeLighting.create(THREE,scene,renderer,{BEND_START,BEND_RATE});
+    const lighting=window.BusThreeLighting.create(THREE,scene,renderer,{BEND_START,BEND_RATE,FAR});
     const objects=window.BusThreeScene.create(THREE,scene,{
       FAR,groundBend,section,backdrop,prop,PROP_TYPES,impactParts,landingSpot,shoulderSpray,chipCorners,lighting
     });
@@ -759,7 +759,7 @@
       view.position.set(cam.cx,cam.cy,d-cam.cz);
       view.rotation.set(-cam.pitch,-cam.a,0,'YXZ');
       sky.update(cam,light);
-      lighting.update({light,cam,bus,pose,d,rocket,busOpacity,level:graphics.level});
+      lighting.update({light,cam,bus,pose,d,rocket,busOpacity,level:graphics.level,time:s.time||0,lapBiomes:s.lapBiomes});
       objects.update(s,{d,t:s.time||0,cam,bus,pose,rocket,bodyOpacity:coachOpacity(s,busOpacity),light});
       renderer.render(scene,view);
     }

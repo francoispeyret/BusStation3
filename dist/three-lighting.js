@@ -7,6 +7,7 @@
       #include <shadowmap_pars_vertex>
     #endif
     uniform vec2 viewForward;
+    uniform float distantOriginOffset;
     uniform vec2 curvature;
     uniform mat4 worldToCoach;
     varying vec3 paint;
@@ -17,6 +18,9 @@
       vec4 world = modelMatrix * vec4(position, 1.);
       #if !defined(BACKDROP) && defined(USE_SHADOWMAP) && NUM_DIR_LIGHT_SHADOWS > 0
         vDirectionalShadowCoord[0] = directionalShadowMatrix[0] * world;
+        #if NUM_DIR_LIGHT_SHADOWS > 1
+          vDirectionalShadowCoord[1] = directionalShadowMatrix[1] * (world + vec4(0., 0., distantOriginOffset, 0.));
+        #endif
       #endif
       #if !defined(BACKDROP) && NUM_SPOT_LIGHT_COORDS == 2
         vSpotLightCoord[0] = spotLightMatrix[0] * world;
@@ -56,14 +60,29 @@
     varying float haze;
 
     #ifndef BACKDROP
+    float mapEdge(vec4 coord) {
+      vec3 border = abs(coord.xyz / coord.w - .5);
+      return smoothstep(.41, .49, max(max(border.x, border.y), border.z));
+    }
+
     float sunlight() {
       #if defined(USE_SHADOWMAP) && NUM_DIR_LIGHT_SHADOWS > 0
-        DirectionalLightShadow sun = directionalLightShadows[0];
-        float visibility = getShadow(directionalShadowMap[0], sun.shadowMapSize, sun.shadowIntensity,
-          sun.shadowBias, sun.shadowRadius, vDirectionalShadowCoord[0]);
-        // Fade the last filter footprint near the edge of the moving shadow camera.
-        vec2 uv = abs(vDirectionalShadowCoord[0].xy / vDirectionalShadowCoord[0].w - .5);
-        return mix(visibility, 1., smoothstep(.41, .49, max(uv.x, uv.y)));
+        float blend = mapEdge(vDirectionalShadowCoord[0]);
+        float nearby = 1.;
+        if (blend < 1.) {
+          DirectionalLightShadow sun = directionalLightShadows[0];
+          nearby = getShadow(directionalShadowMap[0], sun.shadowMapSize, sun.shadowIntensity,
+            sun.shadowBias, sun.shadowRadius, vDirectionalShadowCoord[0]);
+        }
+        if (blend <= 0.) return nearby;
+        float distant = 1.;
+        #if NUM_DIR_LIGHT_SHADOWS > 1
+          DirectionalLightShadow distantSun = directionalLightShadows[1];
+          distant = getShadow(directionalShadowMap[1], distantSun.shadowMapSize, distantSun.shadowIntensity,
+            distantSun.shadowBias, distantSun.shadowRadius, vDirectionalShadowCoord[1]);
+          distant = mix(distant, 1., mapEdge(vDirectionalShadowCoord[1]));
+        #endif
+        return mix(nearby, distant, blend);
       #else
         return 1.;
       #endif
@@ -123,7 +142,7 @@
       gl_FragColor = vec4(mix(lit, fogTint, haze), opacity);
     }`;
 
-  function create(THREE, scene, renderer, {BEND_START, BEND_RATE}) {
+  function create(THREE, scene, renderer, {BEND_START, BEND_RATE, FAR}) {
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.VSMShadowMap;
 
@@ -141,6 +160,12 @@
     const shadowCam = sun.shadow.camera;
     shadowCam.near = .5;
     shadowCam.far = 300;
+    const distantSun = addLight(new THREE.DirectionalLight(), 'Soleil / lune · lointain', -.00045);
+    const distantShadow = distantSun.shadow;
+    distantShadow.autoUpdate = false;
+    distantShadow.camera.near = .5;
+    distantShadow.camera.far = (FAR + 96) * 2;
+    let lastDistant;
     const headlights = ['Phare gauche', 'Phare droit'].map(name => {
       const light = addLight(new THREE.SpotLight(0xffe3a8, 1, 58, .42, .9), name, -.00065);
       light.shadow.camera.near = .55;
@@ -149,6 +174,7 @@
 
     const common = {
       viewForward: {value:new THREE.Vector2()},
+      distantOriginOffset: {value:0},
       worldToCoach: {value:new THREE.Matrix4()},
       ambientTint: {value:new THREE.Vector3()},
       fogTint: {value:new THREE.Vector3()},
@@ -193,7 +219,39 @@
       shadow.mapPass?.setSize(width,height);
     }
 
-    function update({light, cam, bus, pose, rocket, busOpacity, level}) {
+    function updateDistant(light, forwardZ, d, time, lapBiomes, level) {
+      distantShadow.intensity = light.shadow;
+      const {x,y,z} = light.direction;
+      if (!lastDistant || lastDistant.level !== level || lastDistant.route !== lapBiomes ||
+          time < lastDistant.time || time - lastDistant.time >= .16 || Math.abs(d - lastDistant.d) >= 8 ||
+          Math.abs(forwardZ - lastDistant.forwardZ) > .08 ||
+          Math.abs(y - lastDistant.y) + Math.abs(x - lastDistant.x) > .025) {
+        // Fit the visible stretch of road in light space, including bends, hills
+        // and the reversed view during the opening orbit. Distances are in metres.
+        const halfLength = (FAR + 32) / 2;
+        const halfWidth = 58, halfHeight = 18;
+        const horizontal = Math.hypot(x,z);
+        const across = (halfWidth * Math.abs(z) + halfLength * Math.abs(x)) / horizontal;
+        const up = (halfWidth * Math.abs(x) + halfLength * Math.abs(z)) * y / horizontal + halfHeight * horizontal;
+        const camera = distantShadow.camera;
+        camera.left = -across;
+        camera.right = across;
+        camera.top = up;
+        camera.bottom = -up;
+        camera.updateProjectionMatrix();
+        distantSun.target.position.set(0, 8, (FAR - halfLength) * forwardZ);
+        distantSun.position.set(x,y,-z).multiplyScalar(FAR + 96).add(distantSun.target.position);
+        const width = Math.min(2048, level.shadowWidth * 2);
+        setMapSize(distantShadow, width, Math.round(width * 1.5));
+        distantShadow.needsUpdate = true;
+        lastDistant = {d,time,route:lapBiomes,level,forwardZ,x,y};
+      }
+      // The meshes are rebased around the coach every frame. Sample them in
+      // the origin used to render the cached map so its shadows stay on the road.
+      common.distantOriginOffset.value = lastDistant.d - d;
+    }
+
+    function update({light, cam, bus, pose, rocket, busOpacity, level, d, time, lapBiomes}) {
       const {direction} = light;
       const forward = common.viewForward.value.set(Math.sin(cam.a), -Math.cos(cam.a));
       sun.target.position.set(pose.x + 9*forward.x, 2, 9*forward.y);
@@ -210,6 +268,7 @@
       shadowCam.bottom = -height;
       shadowCam.updateProjectionMatrix();
       setMapSize(sun.shadow, level.shadowWidth, Math.round(level.shadowWidth * 4/3));
+      updateDistant(light, forward.y, d, time, lapBiomes, level);
 
       common.ambientTint.value.fromArray(light.tint);
       common.fogTint.value.fromArray(light.fog);
@@ -237,7 +296,7 @@
     function dispose() {
       material.dispose();
       backdropMaterial.dispose();
-      for (const light of [sun, ...headlights]) {
+      for (const light of [sun, distantSun, ...headlights]) {
         scene.remove(light, light.target);
         light.dispose();
       }
