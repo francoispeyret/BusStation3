@@ -26,7 +26,7 @@
     const {roads, bounds, townEdge} = state.map, rand = random(3043), lots = [];
     const reserved = state.stops.map(s => ({x:s.x, y:s.y, radius:5.5}));
     function place(x,y,yaw,type,radius,variant,size) {
-      if (roads.some(r => segmentDistance(x,y,r) < radius+.65)) return;
+      if (roads.some(r => segmentDistance(x,y,r) < radius+(r.kind==='country'?r.vergeWidth:.65))) return;
       if (reserved.some(l => Math.hypot(x-l.x,y-l.y) < radius+l.radius)) return;
       reserved.push({x,y,radius});
       lots.push({x,y,yaw,type,variant,size});
@@ -49,7 +49,7 @@
           const urban=rx<townEdge, roll=rand();
           const type=urban ? (roll<.75?'shop':'tree') : (roll<.16?'farmhouse':roll<.32?'field':'tree');
           const radius=type==='tree'?3:type==='field'?10:8;
-          const offset=road.width/2+radius+(urban?3:4)+rand()*(urban?2:6);
+          const offset=road.width/2+radius+(urban?3:road.vergeWidth)+rand()*(urban?2:6);
           place(rx+nx*offset,ry+ny*offset,yaw,type,radius,Math.floor(rand()*30),.86+rand()*.25);
         }
       }

@@ -5,6 +5,8 @@
   const capacity = 24;
   const topSpeed = 90 / 3.6;
   const coneLimit = 6;
+  const countryRoadWidth = 13, countryVergeWidth = 4;
+  const countryRoadside = countryRoadWidth / 2 + countryVergeWidth + .65;
   const coats = ['#ef795e', '#43ac9d', '#f2bc45', '#9475cc', '#507dd1', '#e796bd'];
   const carPaint = ['#f4b84a', '#539fac', '#ee795d', '#9f91cd', '#6896c7', '#eee6ce'];
   const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
@@ -37,7 +39,8 @@
     const roads = [];
     function street(from, to, kind) {
       const urban = kind === 'city';
-      roads.push({a: byId[from], b: byId[to], kind, width: urban ? 17 : 13, vergeWidth: urban ? 2.8 : 1.25});
+      roads.push({a: byId[from], b: byId[to], kind, width: urban ? 17 : countryRoadWidth,
+        vergeWidth: urban ? 2.8 : countryVergeWidth});
     }
     for (const row of [['NW', 'N', 'NE'], ['W', 'C', 'E'], ['SW', 'S', 'SE'],
       ['NW', 'W', 'SW'], ['N', 'C', 'S'], ['NE', 'E', 'SE']]) {
@@ -63,9 +66,9 @@
       ['musee', 'Musée des Arts', 'NW', 'W', .53, 9.2],
       ['parc', 'Parc des Tilleuls', 'SW', 'S', .46, 9.2],
       ['halles', 'Les Halles', 'E', 'SE', .4, 9.2],
-      ['moulin', 'Vieux Moulin', 'NE', 'mill', .65, 7.3],
-      ['verger', 'Les Vergers', 'hill', 'orchard', .46, 7.3],
-      ['ferme', 'Ferme des Prés', 'farm', 'SE', .42, 7.3]
+      ['moulin', 'Vieux Moulin', 'NE', 'mill', .65, countryRoadside],
+      ['verger', 'Les Vergers', 'hill', 'orchard', .46, countryRoadside],
+      ['ferme', 'Ferme des Prés', 'farm', 'SE', .42, countryRoadside]
     ];
     return places.map(([id, name, from, to, fraction, margin]) =>
       ({id, name, ...roadside(map, from, to, fraction, margin), waiting: [], nextArrival: 0}));
@@ -79,7 +82,7 @@
       for (const from of approaches) {
         const end = map.byId[junction], axis = direction(map.byId[from], end);
         const group = Math.abs(axis.y) > Math.abs(axis.x) ? 0 : 1;
-        const margin = from === 'fork' ? 7.5 : 9.1;
+        const margin = from === 'fork' ? countryRoadside : 9.1;
         lights.push({...offset(end, axis, -10, margin), heading: Math.atan2(axis.x, -axis.y),
           from, to: junction, group, shift, aspect: 'red'});
       }
@@ -87,8 +90,8 @@
     const signs = [
       ['speed30', 'S', 'C', .75, 9.1], ['crossing', 'C', 'N', .23, 9.1],
       ['stop', 'W', 'NW', .91, 9.1], ['stop', 'SE', 'S', .90, 9.1],
-      ['speed50', 'NE', 'mill', .23, 7.3], ['crossing', 'NW', 'W', .28, 9.1],
-      ['stop', 'farm', 'fork', .93, 7.3], ['speed30', 'mill', 'NE', .85, 7.3]
+      ['speed50', 'NE', 'mill', .23, countryRoadside], ['crossing', 'NW', 'W', .28, 9.1],
+      ['stop', 'farm', 'fork', .93, countryRoadside], ['speed30', 'mill', 'NE', .85, countryRoadside]
     ].map(([kind, from, to, fraction, margin]) => ({kind, from, to, ...roadside(map, from, to, fraction, margin)}));
     return {lights, signs};
   }
@@ -284,8 +287,8 @@
       const t = clamp(((position.x - road.a.x) * dx + (position.y - road.a.y) * dy) / (dx*dx + dy*dy), 0, 1);
       const x = road.a.x + t*dx, y = road.a.y + t*dy;
       const lateral = Math.hypot(x - position.x, y - position.y);
-      // The centre can cross a city curb, leaving half the bus width to the outer edge.
-      const limit = road.width / 2 + (road.kind === 'city' ? road.vergeWidth - 1.35 : -1.1);
+      // Leave half the coach width between its centre and the outer edge of the verge.
+      const limit = road.width / 2 + road.vergeWidth - 1.35;
       const over = lateral - limit;
       if (over < best) { best = over; nearest = {x, y, lateral, over}; }
     }

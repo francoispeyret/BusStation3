@@ -183,6 +183,34 @@ test('the bus can cut across a city sidewalk in a turn while staying inside the 
   assert.ok(Math.abs(bus.x + 1.35 - (8.5 + 2.8)) < .01, 'the sidewalk has an outer limit between intersections');
 });
 
+test('the bus can follow either grassy country shoulder and steer back onto the road', () => {
+  const sim = create();
+  const {bus, map} = sim.state;
+  sim.state.cars = [];
+  sim.state.cones = [];
+  const road = map.roads.find(r => r.a.id === 'mill' && r.b.id === 'hill');
+  const dx = road.b.x - road.a.x, dy = road.b.y - road.a.y, length = Math.hypot(dx, dy);
+  const heading = Math.atan2(dx, -dy);
+  for (const side of [-1, 1]) {
+    const beyondAsphalt = () => side * ((bus.y - road.a.y)*dx - (bus.x - road.a.x)*dy) / length - road.width/2;
+    Object.assign(bus, {x:(road.a.x + road.b.x)/2, y:(road.a.y + road.b.y)/2,
+      heading:heading + side * Math.PI/2, speed:12, steer:0});
+    tick(sim, 2, {accelerate:true});
+    const outerEdge = beyondAsphalt();
+    assert.ok(outerEdge > 2, 'the bus can pull completely off the asphalt');
+    assert.ok(Math.abs(outerEdge + 1.35 - road.vergeWidth) < .01, 'the grass leaves half the coach width at the outer boundary');
+    tick(sim, 1, {accelerate:true});
+    assert.ok(Math.abs(beyondAsphalt() - outerEdge) < .01, 'driving outwards cannot cross the outer boundary');
+
+    const x = bus.x, y = bus.y;
+    bus.heading = heading - side * .02;
+    tick(sim, 1.8, {accelerate:true});
+    assert.ok(beyondAsphalt() > 1.35, 'both rows of wheels stay on the grass');
+    assert.ok(((bus.x - x)*dx + (bus.y - y)*dy)/length > 10, 'the bus advances along the shoulder');
+    driveUntil(sim, side > 0 ? {left:true} : {right:true}, () => beyondAsphalt() < -.5);
+  }
+});
+
 test('traffic approaches its signals, stops on red and leaves on green', () => {
   const sim = create();
   let waitingCar, signal, stoppedAt, moved = false;
