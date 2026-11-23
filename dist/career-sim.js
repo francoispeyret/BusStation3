@@ -469,7 +469,12 @@
       stop.nextArrival = state.time + delay;
     }
     queuePassenger(depot);
-    for (const stop of stops) scheduleArrival(stop, stop !== depot);
+    const cityStops = stops.filter(stop => stop !== depot && stop.x <= map.townEdge);
+    const countryStops = stops.filter(stop => stop.x > map.townEdge);
+    for (const district of [cityStops, countryStops]) {
+      queuePassenger(district[Math.floor(random() * district.length)]);
+    }
+    for (const stop of stops) scheduleArrival(stop, stop.waiting.length === 0);
 
     function setNearbyStop() {
       let nearest = null, best = 9.5;

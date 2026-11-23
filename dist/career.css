@@ -80,7 +80,7 @@
   background:#241f30ef;
   box-shadow:0 3px 12px #18242f33;
 }
-#mini-map { display:block; width:100%; height:auto; aspect-ratio:1.65; border-radius:9px; }
+#mini-map { display:block; width:100%; height:auto; aspect-ratio:1.5; border-radius:9px; }
 .network-button>span { display:flex; align-items:center; justify-content:center; gap:4px; padding:5px 2px 3px; font-size:.73rem; font-weight:700; }
 .network-button .icon { color:var(--green); }
 #platform-status {
@@ -160,6 +160,8 @@
 #stop-list li { display:flex; align-items:center; gap:7px; font-size:.82rem; }
 #stop-list .stop-index { display:grid; place-items:center; width:21px; height:21px; flex:none; border:1px solid #92889a; border-radius:50%; font-size:.7rem; font-weight:700; }
 #stop-list .requested .stop-index { color:#302536; border-color:var(--yellow); background:var(--yellow); }
+#stop-list .waiting-count { white-space:nowrap; color:#75ef92; font-size:.76rem; }
+#stop-list .waiting-count::before { content:''; display:inline-block; width:.48em; height:.48em; margin:0 .35em .1em 0; background:currentColor; border-radius:50%; }
 .fuel-map-label { display:flex; align-items:center; gap:7px; margin:15px 0 5px; font-size:.9rem; }
 .fuel-map-label .icon { width:22px; height:22px; padding:2px; border-radius:4px; background:var(--yellow); color:#362c22; }
 #fuel-station-list { display:grid; grid-template-columns:1fr 1fr; gap:4px 12px; padding:0; margin:0; list-style:none; font-size:.82rem; }
@@ -191,9 +193,8 @@
   .career-header .volume-range { width:54px; }
   .career-header .volume-readout { display:none; }
   .career-tool { width:30px; height:30px; margin:0; }
-  .network-button { width:94px; }
   .network-button .map-label-end { display:none; }
-  .stop-display { max-width:calc(100% - 120px); gap:6px; padding:6px; }
+  .stop-display { max-width:calc(100% - 140px); gap:6px; padding:6px; }
   .route-marker { min-width:29px; height:33px; font-size:.9rem; }
   #stop-distance { font-size:.7rem; }
   .instrument-label { font-size:.55rem; }
@@ -214,7 +215,7 @@
   .career-touch { padding-block:4px; }
   .career-touch button { min-height:35px; }
   .instruments { padding-block:4px; }
-  .network-button { width:92px; }
+  .network-button { width:112px; }
   #platform-status { bottom:7px; }
   .stop-display,.network-button { top:7px; }
 }

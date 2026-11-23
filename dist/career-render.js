@@ -984,7 +984,7 @@
     const s=surface(canvas);
     if(!s) return;
     const {ctx,w,h}=s, {map,bus,stops}=state, box=map.bounds;
-    const full=w>=225&&h>=135, padding=full?18:6;
+    const full=w>=225&&h>=135, padding=full?18:4;
     const scale=Math.min((w-2*padding)/(box.maxX-box.minX),(h-2*padding)/(box.maxY-box.minY));
     if(scale<=0) return;
     const ox=w/2-(box.minX+box.maxX)*scale/2,oy=h/2-(box.minY+box.maxY)*scale/2;
@@ -997,11 +997,12 @@
     }
     ctx.restore();
     const requested=new Set(state.passengers.map(p=>p.destination));
+    const radius=full?9:4.8;
     ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.font='bold '+(full?12:8)+'px sans-serif';
     for(const [i,stop] of stops.entries()) {
-      const x=ox+stop.x*scale,y=oy+stop.y*scale,r=full?9:4.8;
-      if(requested.has(stop.id)) dot(ctx,x,y,r+2.2,GOLD);
-      dot(ctx,x,y,r,INK); dot(ctx,x,y,r-.9,requested.has(stop.id)?GOLD:'#9fddd0');
+      const x=ox+stop.x*scale,y=oy+stop.y*scale;
+      if(requested.has(stop.id)) dot(ctx,x,y,radius+2.2,GOLD);
+      dot(ctx,x,y,radius,INK); dot(ctx,x,y,radius-.9,requested.has(stop.id)?GOLD:'#bad0d6');
       ctx.fillStyle=INK; ctx.fillText(String(i+1),x,y+.5);
     }
     for(const station of map.fuelStations) {
@@ -1012,6 +1013,17 @@
     polygon(ctx,[[0,-r*1.5],[r*1.05,r], [0,r*.62],[-r*1.05,r]],INK);
     polygon(ctx,[[0,-r*1.14],[r*.73,r*.67],[0,r*.37],[-r*.73,r*.67]],'#ff8268');
     ctx.restore();
+    // Place queues towards the outer edge, away from the fuel pins and the bus at the stop.
+    const pip=full?3.3:1.95, spacing=pip*2+.7;
+    for(const stop of stops) {
+      const count=stop.waiting.length;
+      const y=oy+stop.y*scale, row=y+(y<h/2?-1:1)*(radius+1);
+      const left=ox+stop.x*scale-(count-1)*spacing/2;
+      for(let i=0;i<count;i++) {
+        dot(ctx,left+i*spacing,row,pip+.8,INK);
+        dot(ctx,left+i*spacing,row,pip,'#75ef92');
+      }
+    }
   }
 
   function create(canvas,{busId='alpin'}={}) {

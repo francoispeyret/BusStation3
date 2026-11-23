@@ -109,14 +109,29 @@ test('a recently served stop stays empty and a moving bus can pass later arrival
   assert.equal(doorEvents.length, 4);
 });
 
+test('each service starts with one passenger at the depot and two more at different city and country stops', () => {
+  const cityChoices = new Set(), countryChoices = new Set();
+  for (let seed = 1; seed <= 32; seed++) {
+    const {state} = create({random:context.window.BusMesh.random(seed)});
+    const occupied = state.stops.filter(stop => stop.waiting.length);
+    assert.equal(occupied.length, 3);
+    assert.ok(occupied.includes(state.nearbyStop));
+    assert.ok(occupied.every(stop => stop.waiting.length === 1 && stop.nextArrival >= stop.demand.minInterval));
+    const city = occupied.find(stop => stop !== state.nearbyStop && stop.x <= state.map.townEdge);
+    const country = occupied.find(stop => stop.x > state.map.townEdge);
+    assert.ok(city && country);
+    cityChoices.add(city.id);
+    countryChoices.add(country.id);
+  }
+  assert.ok(cityChoices.size > 1 && countryChoices.size > 1);
+});
+
 test('demand grows one rider at a time with smaller and slower queues in the countryside', () => {
-  for (const [stopId, limit, minimum, maximum] of [['marche', 3, 45, 75], ['ferme', 2, 70, 110]]) {
-    const sim = create(), {state} = sim, depot = state.nearbyStop;
-    assert.equal(depot.waiting.length, 1);
-    assert.ok(state.stops.every(item => item === depot || item.waiting.length === 0));
+  for (const [rural, limit, minimum, maximum] of [[false, 3, 45, 75], [true, 2, 70, 110]]) {
+    const sim = create(), {state} = sim;
     state.cars = [];
     Object.assign(state.bus, {x:0, y:0});
-    const stop = state.stops.find(item => item.id === stopId);
+    const stop = state.stops.find(item => !item.waiting.length && (item.x > state.map.townEdge) === rural);
     const next = stop.nextArrival - state.time;
     assert.equal(stop.waiting.length, 0);
     tick(sim, next - .1);

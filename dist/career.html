@@ -7,7 +7,7 @@
   <title>Carrière · Bus Station 3</title>
   <link rel="icon" href="assets/bus-mark.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css?v=20">
-  <link rel="stylesheet" href="career.css?v=6">
+  <link rel="stylesheet" href="career.css?v=7">
   <link rel="stylesheet" href="career-profiles.css?v=1">
   <script defer src="assets/vendor/number-flow-0.6.2.js"></script>
   <script defer src="mesh.js?v=5"></script>
@@ -31,10 +31,10 @@
   <script defer src="career-profiles.js?v=1"></script>
   <script defer src="career-physics.js?v=1"></script>
   <script defer src="career-motion.js?v=1"></script>
-  <script defer src="career-sim.js?v=8"></script>
+  <script defer src="career-sim.js?v=9"></script>
   <script defer src="career-roads.js?v=1"></script>
-  <script defer src="career-render.js?v=8"></script>
-  <script defer src="career.js?v=7"></script>
+  <script defer src="career-render.js?v=9"></script>
+  <script defer src="career.js?v=8"></script>
 </head>
 <body class="career-app">
   <svg class="career-icons" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -69,7 +69,7 @@
           <div><span class="instrument-label" id="stop-label"></span><strong id="stop-name"></strong></div>
           <span id="stop-distance"></span>
         </div>
-        <button class="network-button" id="open-map" type="button" aria-label="Ouvrir le plan du réseau" title="Plan du réseau (M)">
+        <button class="network-button" id="open-map" type="button" aria-label="Ouvrir le plan du réseau" title="Plan du réseau (M) · Un point vert par passager en attente">
           <canvas id="mini-map" aria-hidden="true"></canvas>
           <span><svg class="icon" aria-hidden="true"><use href="#ic-map"/></svg> Plan <span class="map-label-end">du réseau</span></span>
         </button>
@@ -109,7 +109,7 @@
         <a class="audio-credits" href="assets/licenses/cinematic-audio.txt" target="_blank" rel="noopener">Crédits sonores</a>
       </div>
       <div id="map-panel" hidden>
-        <canvas id="network-map" aria-label="Plan des routes, des arrêts, des stations-service et de la position du bus"></canvas>
+        <canvas id="network-map" aria-label="Plan des routes, des arrêts, des stations-service et de la position du bus. Chaque point vert représente un passager en attente."></canvas>
         <ol id="stop-list" aria-label="Arrêts du réseau"></ol>
         <h3 class="fuel-map-label"><svg class="icon" aria-hidden="true"><use href="#ic-fuel"/></svg> Stations-service</h3>
         <ul id="fuel-station-list" aria-label="Stations-service"></ul>

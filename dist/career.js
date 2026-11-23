@@ -205,7 +205,15 @@
       number.textContent = index + 1;
       const count = passengers.filter(person => person.destination === stop.id).length;
       li.classList.toggle('requested', count > 0);
-      li.append(number, stop.name + (count ? ' · ' + count + ' à déposer' : ''));
+      const label = document.createElement('span');
+      label.append(stop.name + (count ? ' · ' + count + ' à déposer' : ''));
+      if (stop.waiting.length) {
+        const waiting = document.createElement('span');
+        waiting.className = 'waiting-count';
+        waiting.textContent = stop.waiting.length + ' en attente';
+        label.append(' ', waiting);
+      }
+      li.append(number, label);
       list.append(li);
     });
     const stations = $('fuel-station-list');
