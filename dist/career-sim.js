@@ -135,18 +135,16 @@
     return {points, length, controls};
   }
 
-  function poseCar(car) {
-    const points = car.route.points;
+  function routePose(route, location) {
+    const points = route.points;
     let lo = 1, hi = points.length - 1;
     while (lo < hi) {
       const mid = (lo + hi) >>> 1;
-      if (points[mid].at < car.location) lo = mid + 1;
+      if (points[mid].at < location) lo = mid + 1;
       else hi = mid;
     }
-    const a = points[lo - 1], b = points[lo], t = (car.location - a.at) / (b.at - a.at);
-    car.x = a.x + (b.x - a.x) * t;
-    car.y = a.y + (b.y - a.y) * t;
-    car.heading = Math.atan2(b.x - a.x, a.y - b.y);
+    const a = points[lo - 1], b = points[lo], t = (location - a.at) / (b.at - a.at);
+    return {x:a.x + (b.x - a.x)*t, y:a.y + (b.y - a.y)*t, heading:Math.atan2(b.x - a.x, a.y - b.y)};
   }
 
   function makeTraffic(state) {
@@ -161,15 +159,18 @@
       [0.16 + .055 * i, .73 + .021 * i].forEach(fraction => {
         const id = cars.length;
         const car = {id, color: carPaint[id % carPaint.length], route, location: route.length * fraction,
-          cruise: 7.5 + (id % 4), speed: 5, stoppedAt: null, wait: 0, contact: false};
-        poseCar(car);
+          cruise:7.5 + (id % 4), speed:5, stoppedAt:null, wait:0, mode:'driving',
+          recoverAt:0, busContactAt:-Infinity, yieldToBus:false, yawRate:0};
+        Object.assign(car, routePose(route, car.location));
+        car.vx = Math.sin(car.heading)*car.speed;
+        car.vy = -Math.cos(car.heading)*car.speed;
         cars.push(car);
       });
     });
     return cars;
   }
 
-  function trafficSpeed(car, state, dt) {
+  function trafficSpeed(car, state, dt, heading = car.heading) {
     if (car.wait > 0) {
       car.wait -= dt;
       return 0;
@@ -185,31 +186,94 @@
       if (ahead < .45 && !control.light) { car.stoppedAt = control; car.wait = 1.1; }
       speed = Math.min(speed, Math.sqrt(7 * Math.max(0, ahead - .12)));
     }
-    const forward = forwardOf(car.heading);
-    function follow(vehicle, gap) {
-      if (vehicle === car || Math.cos(vehicle.heading - car.heading) < .75) return;
+    const forward = forwardOf(heading);
+    function follow(vehicle, gap, yieldRegardlessOfDirection = false) {
+      if (vehicle === car || (!yieldRegardlessOfDirection && Math.cos(vehicle.heading - heading) < .75)) return;
       const dx = vehicle.x - car.x, dy = vehicle.y - car.y;
       const along = dx * forward.x + dy * forward.y;
       const across = Math.abs(-dx * forward.y + dy * forward.x);
       if (along > 0 && along < 22 && across < 2.15) {
-        speed = Math.min(speed, Math.max(0, (along - gap) * .85 + Math.max(0, vehicle.speed)));
+        speed = Math.min(speed, Math.max(0, (along - gap) * .85 + Math.max(0, vehicle.vx*forward.x + vehicle.vy*forward.y)));
       }
     }
-    follow(state.bus, 8.5);
+    if (car.yieldToBus && distance(state.bus, car) > 22) car.yieldToBus = false;
+    follow(state.bus, 8.5, car.yieldToBus);
     for (const other of state.cars) follow(other, 5.6);
     return speed;
   }
 
-  // Separating-axis test for a 9.2 x 2.7 m bus against a 4.1 x 1.85 m car.
-  function touching(bus, car) {
-    const dx = bus.x - car.x, dy = bus.y - car.y;
-    if (dx*dx + dy*dy > 52) return false;
-    const busForward = forwardOf(bus.heading), carForward = forwardOf(car.heading);
-    const busRight = {x: -busForward.y, y: busForward.x}, carRight = {x: -carForward.y, y: carForward.x};
-    function span(a, b) { return Math.abs(a.x * b.x + a.y * b.y); }
-    return [busForward, busRight, carForward, carRight].every(axis =>
-      Math.abs(dx * axis.x + dy * axis.y) < 4.6 * span(axis, busForward) + 1.35 * span(axis, busRight)
-        + 2.05 * span(axis, carForward) + .925 * span(axis, carRight));
+  function yawDelta(to, from) {
+    return Math.atan2(Math.sin(to-from), Math.cos(to-from));
+  }
+
+  function closestRouteLocation(car) {
+    const {points, length} = car.route;
+    let best = Infinity, location = car.location;
+    for (let i = 1; i < points.length; i++) {
+      const a = points[i-1], b = points[i];
+      const dx = b.x-a.x, dy = b.y-a.y;
+      const t = clamp(((car.x-a.x)*dx + (car.y-a.y)*dy) / (dx*dx + dy*dy), 0, 1);
+      const error = (car.x-a.x-t*dx)**2 + (car.y-a.y-t*dy)**2;
+      if (error < best) {
+        best = error;
+        location = a.at + t*(b.at-a.at);
+      }
+    }
+    return location % length;
+  }
+
+  function rejoinLane(car, state, dt) {
+    car.location = closestRouteLocation(car);
+    const lane = routePose(car.route, car.location), forward = forwardOf(lane.heading);
+    const right = {x:-forward.y, y:forward.x};
+    const across = (lane.x-car.x)*right.x + (lane.y-car.y)*right.y;
+    const along = car.vx*forward.x + car.vy*forward.y, lateral = car.vx*right.x + car.vy*right.y;
+    const wanted = trafficSpeed(car, state, dt, lane.heading);
+    const speed = along + clamp(wanted - along, -6*dt, 2.2*dt);
+    const correction = clamp(1.15*across, -3.5, 3.5);
+    const sideways = lateral + clamp(correction-lateral, -3.5*dt, 3.5*dt);
+    car.vx = forward.x*speed + right.x*sideways;
+    car.vy = forward.y*speed + right.y*sideways;
+    const bearing = lane.heading + Math.atan2(sideways, Math.max(2, speed));
+    car.yawRate = clamp(3.6*yawDelta(bearing, car.heading), -1.65, 1.65);
+    car.heading += car.yawRate*dt;
+    car.x += car.vx*dt;
+    car.y += car.vy*dt;
+    car.speed = Math.max(0, speed);
+    if (Math.abs(across) < .018 && Math.abs(yawDelta(lane.heading, car.heading)) < .012) {
+      car.location = closestRouteLocation(car);
+      car.mode = 'driving';
+    }
+  }
+
+  function moveTraffic(car, state, dt) {
+    if (car.mode === 'sliding') {
+      if (state.time < car.recoverAt) {
+        window.CareerPhysics.slide(car, dt);
+        return;
+      }
+      car.mode = 'rejoining';
+    }
+    if (car.mode === 'rejoining') {
+      rejoinLane(car, state, dt);
+      return;
+    }
+    const wanted = trafficSpeed(car, state, dt);
+    car.speed += clamp(wanted - car.speed, -6*dt, 2.2*dt);
+    car.location = (car.location + car.speed*dt) % car.route.length;
+    const oldHeading = car.heading;
+    Object.assign(car, routePose(car.route, car.location));
+    car.vx = Math.sin(car.heading)*car.speed;
+    car.vy = -Math.cos(car.heading)*car.speed;
+    car.yawRate = clamp(yawDelta(car.heading, oldHeading)/dt, -1.5, 1.5);
+  }
+
+  function dislodge(car, strength, time) {
+    if (strength > .55 || car.mode === 'driving') {
+      car.mode = 'sliding';
+      car.recoverAt = time + 2.3;
+      car.wait = 0;
+    }
   }
 
   function nearestRoad(position, roads) {
@@ -317,7 +381,9 @@
 
   function create({onEvent = () => {}, random = Math.random} = {}) {
     const map = makeMap(), stops = makeStops(map);
-    const state = {map, stops, ...makeSignals(map), bus: {x: 5.2, y: 62, heading: 0, speed: 0, steer: 0},
+    const bus = {x:5.2, y:62, heading:0, speed:0, steer:0, vx:0, vy:0, yawRate:0,
+      motion:window.CareerMotion.create()};
+    const state = {map, stops, ...makeSignals(map), bus,
       time: 0, distance: 0, earnings: 0, passengers: [], people: [], doorsOpen: false, serviceComplete: false,
       nearbyStop: stops[0], district: 'Centre-ville', collisions: 0, cones: []};
     state.cars = makeTraffic(state);
@@ -327,7 +393,7 @@
       if (site) state.cones.push({id, ...site, hit:null});
     }
     updateLights(state);
-    let serial = 0, activeStop = null, lastCollision = -Infinity;
+    let serial = 0, activeStop = null;
     function queuePassenger(stop, index) {
       const number = serial++;
       const choices = stops.filter(item => item !== stop);
@@ -408,8 +474,11 @@
     function step(dt, input) {
       state.time += dt;
       updateLights(state);
-      const previousBus = {x: state.bus.x, y: state.bus.y};
+      const oldX = bus.x, oldY = bus.y, oldHeading = bus.heading, oldSpeed = bus.speed;
       drive(state, dt, input);
+      bus.vx = (bus.x - oldX)/dt;
+      bus.vy = (bus.y - oldY)/dt;
+      bus.yawRate = (bus.heading - oldHeading)/dt;
       updateService(dt);
       for (const stop of stops) {
         if (state.time >= stop.nextArrival && stop.waiting.length < 4 && distance(state.bus, stop) > 35) {
@@ -417,34 +486,34 @@
           stop.nextArrival = state.time + 30;
         }
       }
+      for (const car of state.cars) moveTraffic(car, state, dt);
       for (const car of state.cars) {
-        if (car.contact && touching(state.bus, car)) {
-          // A stopped car occupies its lane until the driver backs away or turns clear.
-          if (distance(state.bus, car) < distance(previousBus, car)) {
-            state.distance -= distance(state.bus, previousBus);
-            Object.assign(state.bus, previousBus);
-            state.bus.speed = 0;
-          }
-          continue;
+        const hit = window.CareerPhysics.collideBus(bus, car);
+        if (!hit) continue;
+        car.yieldToBus = true;
+        dislodge(car, hit.strength, state.time);
+        if (hit.strength > .55 && state.time - car.busContactAt > .45) {
+          state.collisions++;
+          window.CareerMotion.impact(bus, hit);
+          onEvent({type:'collision', message:'Accrochage !', ...hit});
         }
-        const wanted = trafficSpeed(car, state, dt);
-        car.speed += clamp(wanted - car.speed, -6 * dt, 2.2 * dt);
-        car.location = (car.location + car.speed * dt) % car.route.length;
-        poseCar(car);
-        const hit = touching(state.bus, car);
-        if (hit && !car.contact) {
-          car.speed = 0;
-          car.wait = 1;
-          state.bus.speed *= -.18;
-          if (state.time - lastCollision > 1.5) {
-            state.collisions++;
-            lastCollision = state.time;
-            onEvent({type: 'collision', message: 'Accrochage !'});
+        car.busContactAt = state.time;
+      }
+      // A displaced car can also knock a neighbouring vehicle out of its lane.
+      for (let i = 0; i < state.cars.length; i++) {
+        const a = state.cars[i];
+        for (let j = i+1; j < state.cars.length; j++) {
+          const b = state.cars[j];
+          if (a.mode === 'driving' && b.mode === 'driving') continue;
+          const hit = window.CareerPhysics.collideCars(a, b);
+          if (hit) {
+            dislodge(a, hit.strength, state.time);
+            dislodge(b, hit.strength, state.time);
           }
         }
-        car.contact = hit;
       }
       updateCones(state, sites, random, onEvent);
+      window.CareerMotion.update(bus, dt, oldSpeed, input);
       setNearbyStop();
     }
 

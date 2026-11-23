@@ -5,7 +5,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const context = vm.createContext({window: {}});
-for (const file of ['mesh.js', 'bus-handling.js', 'career-sim.js']) {
+for (const file of ['mesh.js', 'bus-handling.js', 'career-motion.js', 'career-physics.js', 'career-sim.js']) {
   const filename = path.join(__dirname, '../dist', file);
   vm.runInContext(fs.readFileSync(filename, 'utf8'), context, {filename});
 }
@@ -158,19 +158,119 @@ test('traffic approaches its signals, stops on red and leaves on green', () => {
   assert.ok(moved, 'the waiting car clears its stop line during the next green phase');
 });
 
-test('an oncoming car can strike the bus and stays in contact without repeated notices', () => {
+// Car 0 travels north on the long straight from the depot to the central lights.
+function collisionScenario({offset = 0, gap = 9, heading = 0, busSpeed = 19, carSpeed = 3, cruise = 8} = {}) {
   const events = [];
-  const sim = create({onEvent: e => events.push(e)});
-  const car = sim.state.cars.find(c => Math.abs(c.heading) < .01 && Math.abs(c.x - 3.485) < .01);
-  assert.ok(car);
-  Object.assign(sim.state.bus, {x: car.x, y: car.y - 8, heading: Math.PI, speed: 0});
-  tick(sim, 3);
+  const sim = create({onEvent:e => events.push(e)});
+  const {bus, cars} = sim.state, car = cars[0];
+  sim.state.cars = [car];
+  sim.state.cones = [];
+  car.location = 36;
+  const lane = car.route.points[0];
+  Object.assign(car, {x:lane.x, y:lane.y-car.location, heading:0, speed:carSpeed, cruise, vx:0, vy:-carSpeed});
+  Object.assign(bus, {x:car.x+offset, y:car.y+gap, heading, speed:busSpeed});
+  return {sim, car, bus, events};
+}
+
+test('a stationary coach absorbs an oncoming hit and traffic proceeds once it moves clear', () => {
+  const {sim, car, bus, events} = collisionScenario({gap:-9, heading:Math.PI, busSpeed:0, carSpeed:8});
+  const parked = {x:bus.x, y:bus.y};
+  tick(sim, .6);
+  assert.equal(car.mode, 'sliding');
+  assert.ok(car.vy > 0, 'the oncoming car recoils from the bus bumper');
+  assert.equal(bus.x, parked.x);
+  assert.equal(bus.y, parked.y);
+  assert.equal(bus.speed, 0);
+  tick(sim, 4);
   assert.equal(sim.state.collisions, 1);
   assert.equal(events.filter(e => e.type === 'collision').length, 1);
-  assert.equal(car.speed, 0);
-  const previous = car.location;
-  tick(sim, 2);
-  assert.equal(car.location, previous);
-  tick(sim, 2, {brake: true});
-  assert.ok(sim.state.bus.speed < 0);
+  assert.ok(car.speed < .2, 'the driver yields to the obstruction on recovering');
+  Object.assign(bus, {x:-6, y:85});
+  const before = car.location;
+  tick(sim, 3);
+  assert.ok(car.speed > 4 && car.location > before + 5);
+});
+
+test('a coach can keep pushing another vehicle without locking, reversing or repeating the impact', () => {
+  const {sim, car, bus, events} = collisionScenario({busSpeed:8, carSpeed:0, cruise:0});
+  const carStart = car.y, busStart = bus.y;
+  let before = bus.speed;
+  for (let frame = 0; frame < 60 && !events.length; frame++) {
+    before = bus.speed;
+    sim.update(1/60, {accelerate:true});
+  }
+  const impact = events[0];
+  assert.equal(impact.type, 'collision');
+  assert.ok(impact.strength > 8 && impact.longitudinal < -.99);
+  assert.ok(bus.speed < before && bus.speed > .85*before, 'a rear-end impact costs only a little coach speed');
+  assert.ok(-car.vy > .9*before && Math.abs(car.yawRate) < .01, 'a central hit pushes the car straight ahead');
+  tick(sim, 2, {accelerate:true});
+  assert.equal(events.length, 1);
+  assert.equal(bus.heading, 0);
+  assert.ok(car.y < carStart - 20 && bus.y < busStart - 20);
+  assert.ok(bus.y-car.y > 6.62, 'the two bumpers stay separated even under sustained throttle');
+});
+
+test('an offset hit spins the lighter car, which steers back into traffic and obeys the next red light', () => {
+  for (const hz of [30, 60, 120]) {
+    const {sim, car, bus, events} = collisionScenario({offset:1.65});
+    const laneX = car.x;
+    sim.state.time = 4; // Arrange for a red phase when the driver reaches the junction.
+    for (let frame = 0; frame < hz && !events.length; frame++) sim.update(1/hz);
+    assert.equal(events[0].type, 'collision');
+    assert.ok(Math.abs(car.yawRate) > 1);
+    assert.equal(bus.heading, 0);
+    // Clear the obstruction as soon as the cars separate and follow the full recovery.
+    Object.assign(bus, {x:0, y:110, speed:0});
+    let maxOffset = 0, sawRecovery = false, wasDriving = false, stopped = false;
+    const control = car.route.controls[0];
+    for (let frame = 0; frame < hz*27; frame++) {
+      const x = car.x, y = car.y;
+      sim.update(1/hz);
+      assert.ok(Math.hypot(car.x-x, car.y-y) < 25/hz, 'the car moves continuously throughout its return');
+      maxOffset = Math.max(maxOffset, Math.abs(car.x-laneX));
+      sawRecovery ||= car.mode === 'rejoining';
+      wasDriving ||= sawRecovery && car.mode === 'driving' && car.speed > 5;
+      if (control.light.aspect === 'red' && car.speed < .1 && Math.abs(control.at - car.location) < .5) stopped = true;
+      if (stopped && control.light.aspect === 'green' && car.location > control.at+2) break;
+    }
+    assert.ok(maxOffset > 1 && sawRecovery && wasDriving);
+    assert.ok(stopped && car.location > control.at+2, 'the recovered driver stops on red and leaves on green');
+    assert.equal(events.length, 1);
+  }
+});
+
+test('a car striking the side of the coach produces a lateral suspension impulse', () => {
+  const {sim, bus, events} = collisionScenario({gap:-6, heading:Math.PI/2, busSpeed:0, carSpeed:7});
+  const {x, y} = bus;
+  tick(sim, .65);
+  assert.equal(events.length, 1);
+  assert.ok(events[0].side < -.99 && Math.abs(events[0].longitudinal) < .01);
+  assert.ok(Math.abs(bus.motion.roll) > .001, 'the impact reaches the suspension during the collision substep');
+  assert.equal(bus.x, x);
+  assert.equal(bus.y, y);
+});
+
+test('a car pushed by the coach can transfer its momentum to another car', () => {
+  const {sim, car, events} = collisionScenario({busSpeed:13, carSpeed:0, cruise:0});
+  const next = {...car, id:20, y:car.y-8.5, location:car.location+8.5};
+  sim.state.cars.push(next);
+  const start = next.y;
+  tick(sim, .9, {accelerate:true});
+  assert.equal(next.mode, 'sliding');
+  assert.ok(next.y < start-1 && next.vy < -3);
+  assert.equal(events.length, 1, 'only contact involving the player triggers the notification');
+});
+
+test('reversing into a parked car pushes it backwards and slows the coach in reverse', () => {
+  const {sim, car, bus, events} = collisionScenario({gap:-7.5, busSpeed:-4.2, carSpeed:0, cruise:0});
+  const initialY = car.y;
+  for (let frame = 0; frame < 60 && !events.length; frame++) sim.update(1/60, {brake:true});
+  assert.equal(events[0].type, 'collision');
+  assert.ok(events[0].longitudinal > .99, 'the bus receives a forward impulse through its rear bumper');
+  assert.ok(bus.speed > -4.2 && bus.speed < -3.4);
+  assert.ok(car.vy > 3.6 && Math.abs(car.yawRate) < .01);
+  tick(sim, .6, {brake:true});
+  assert.ok(car.y > initialY + 2 && bus.speed < 0);
+  assert.equal(events.length, 1);
 });

@@ -83,7 +83,7 @@
       notices.push({type:'lap', title:'Descente', message:event.stopName});
     } else if (event.type === 'collision') {
       audio.effect('collision');
-      notices.push({type:'collision', title:'Accrochage !', message:'Reprends le volant'});
+      notices.push({type:'collision', title:'Accrochage !', message:'Choc avec une voiture'});
     } else if (event.type === 'cone') {
       audio.effect('cone');
       notices.push({type:'cone', title:'Oups !', message:event.message});

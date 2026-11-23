@@ -293,6 +293,25 @@
       heading:hit.heading+f.turn, lift:f.lift, pitch:f.pitch, roll:f.roll, alpha:f.alpha};
   }
 
+  const suspensionPivot=.8;
+  const reducedMotion=window.matchMedia?.('(prefers-reduced-motion: reduce)');
+
+  function careerCoach(busId,lowDetail=false) {
+    const fleet=window.BusModels;
+    const coach=fleet.models.find(model=>model.id===busId)||fleet.models[0];
+    const {body,wheels}=fleet.parts(coach.id,lowDetail);
+    const sx=2.7/coach.width, sy=1.08, sz=9.2/coach.length;
+    const baseY=.035-(wheels[0].y-wheels[0].radius)*sy;
+    return {coach,body,sx,sy,sz,baseY,wheels:wheels.map(w=>({...w,
+      x:w.x*sx,y:w.y*sy,z:-w.z*sz,radius:w.radius*sy}))};
+  }
+
+  function suspension(bus) {
+    const m=bus.motion, amount=reducedMotion?.matches ? .15 : 1;
+    return {pitch:m.pitch*amount,roll:m.roll*amount,heave:m.heave*amount,
+      sway:m.sway*amount,yaw:m.yaw*amount};
+  }
+
   function threeView(canvas,busId) {
     const T=window.THREE;
     if (!T) return null;
@@ -321,19 +340,32 @@
       world.add(obj);
       return obj;
     }
-    const fleet=window.BusModels;
-    const coach=fleet.models.find(f=>f.id===busId)||fleet.models[0];
-    const bus=new T.Mesh(asset('coach',()=>fleet.mesh(coach.id)),material);
-    bus.scale.set(2.7/coach.width,1.08,-9.2/coach.length);
-    bus.castShadow=bus.receiveShadow=true;
-    scene.add(bus);
-    const lampPosition=point=>[point[0]*bus.scale.x,point[1]*bus.scale.y,point[2]*-bus.scale.z];
+    const rig=careerCoach(busId), {coach,sx,sy,sz}=rig;
+    const chassis=new T.Group(), suspensionMount=new T.Group();
+    scene.add(chassis); chassis.add(suspensionMount);
+    const body=new T.Mesh(asset('coach',()=>rig.body),material);
+    body.scale.set(sx,sy,-sz);
+    body.position.y=-suspensionPivot;
+    body.castShadow=body.receiveShadow=true;
+    suspensionMount.add(body);
+    const wheels=rig.wheels.map((wheel,i)=>{
+      const pivot=new T.Group(), tyre=new T.Mesh(asset('wheel'+i,()=>wheel.mesh),material);
+      pivot.position.set(wheel.x,wheel.y,wheel.z);
+      // Stretch the wheelbase with the coach, while keeping the rolling tyres round.
+      tyre.scale.set(sx,sy,-sy);
+      tyre.castShadow=tyre.receiveShadow=true;
+      pivot.add(tyre); chassis.add(pivot);
+      return {pivot,tyre,front:wheel.front};
+    });
+    const bodyOrigin=new T.Vector3();
+    const lampPosition=point=>[point[0]*sx,point[1]*sy,point[2]*sz];
     const lamps={headlamp:lampPosition(coach.headlamp),taillamp:lampPosition(coach.taillamp)};
     const doorstep=new Mesh();
     doorstep.box(1.35,.28,-2.25,.57,.11,1.32,'#f0bd5d');
     const step=new T.Mesh(asset('door',()=>doorstep),material);
     step.castShadow=step.receiveShadow=true;
-    scene.add(step);
+    step.position.y=-suspensionPivot;
+    suspensionMount.add(step);
     const labels=[];
     function stopName(s) {
       const surface=document.createElement('canvas');
@@ -469,7 +501,7 @@
       previousTime=state.time;
       const sx=Math.sin(cameraHeading), cz=Math.cos(cameraHeading);
       const portrait=w<h, back=(portrait?19:15.6)+Math.min(2,Math.abs(b.speed)*.05);
-      const lateral=1.30, eyeHeight=portrait?9.3:7.35;
+      const lateral=portrait?2.75:3.1, eyeHeight=portrait?9.3:7.35;
       camera.position.set(b.x-sx*back+cz*lateral,eyeHeight,b.y+cz*back+sx*lateral);
       target.set(b.x+sx*(portrait?4.0:6.0),1.10,b.y-cz*(portrait?4.0:6.0));
       camera.lookAt(target);
@@ -478,12 +510,22 @@
         f:1/Math.tan(T.MathUtils.degToRad(camera.fov/2)),aspect:camera.aspect};
       const light=serviceLight(state.time);
       sky.update(cam,light);
-      bus.position.set(b.x,.12,b.y);
-      bus.rotation.y=-b.heading;
-      lighting.update({light,cam,bus:lamps,pose:{x:b.x,y:bus.position.y,z:-b.y,pitch:0,yaw:b.heading,roll:0},
+      chassis.position.set(b.x,rig.baseY,b.y);
+      chassis.rotation.y=-b.heading;
+      for(const wheel of wheels) {
+        if(wheel.front) wheel.pivot.rotation.y=-b.motion.wheelAngle;
+        wheel.tyre.rotation.x=-b.motion.wheelSpin;
+      }
+      const motion=suspension(b);
+      suspensionMount.position.set(motion.sway,suspensionPivot+motion.heave,0);
+      suspensionMount.rotation.set(motion.pitch,-motion.yaw,-motion.roll,'YZX');
+      body.getWorldPosition(bodyOrigin);
+      // The shared lighting takes the same body transform in a +Z-forward frame.
+      lighting.update({light,cam,bus:lamps,pose:{x:bodyOrigin.x,y:bodyOrigin.y,z:-bodyOrigin.z,
+        pitch:-motion.pitch,yaw:b.heading+motion.yaw,roll:-motion.roll},
         d:0,time:state.time,lapBiomes:state.map,busOpacity:1,level:window.BusSky.graphicsLevels[settings.detail]});
       for(const label of labels) label.mat.color.fromArray(light.tint).convertSRGBToLinear();
-      step.position.copy(bus.position); step.rotation.y=-b.heading; step.visible=state.doorsOpen;
+      step.visible=state.doorsOpen;
       for(const obj of dynamic.values()) obj.visible=false;
       for(const [i,s] of state.lights.entries()) {
         actor('light'+i,asset('light'+s.aspect,()=>signalModel(s.aspect)),s.x,0,s.y,s.heading);
@@ -549,9 +591,7 @@
     }
     ctx.closePath(); ctx.fillStyle=color; ctx.fill();
   }
-  function vehicle(ctx,v,bus,body) {
-    ctx.save(); ctx.translate(v.x,v.y); ctx.rotate(v.heading);
-    const w=bus?2.7:1.85, h=bus?9.2:4.25;
+  function vehicleBody(ctx,w,h,body,bus=false) {
     rect(ctx,-w/2,-h/2,w,h,body);
     rect(ctx,-w*.41,-h*.42,w*.82,h*.18,'#4e7282');
     rect(ctx,-w*.41,h*.25,w*.82,h*.13,'#719ca5');
@@ -560,6 +600,18 @@
       rect(ctx,-w*.29,-h*.10,w*.56,h*.10,'#b19066');
       rect(ctx,-w*.28,h*.08,w*.55,h*.08,'#77a296');
     }
+  }
+  function overheadWheels(ctx,bus,wheels) {
+    ctx.save(); ctx.translate(bus.x,bus.y); ctx.rotate(bus.heading);
+    rect(ctx,-1.17,-4.3,2.34,8.6,'#43515a');
+    for(const wheel of wheels) {
+      ctx.save(); ctx.translate(wheel.x,wheel.z);
+      if(wheel.front) ctx.rotate(bus.motion.wheelAngle);
+      rect(ctx,-.18,-wheel.radius,.36,2*wheel.radius,'#293941');
+      const tread=.76*wheel.radius*Math.sin(bus.motion.wheelSpin);
+      rect(ctx,-.15,tread-.055,.30,.11,'#65716f');
+      ctx.restore();
+    }
     ctx.restore();
   }
   function overhead(canvas,busId) {
@@ -567,11 +619,13 @@
       farmhouse:[7.4,6,6],mill:[6,6,10]};
     const busColor=({alpin:'#d96b59',lagon:'#66b3a7',ecolier:'#e8b44c',
       nocturne:'#7385a4',imperiale:'#b95655'})[busId]||'#d96b59';
-    const coach=window.BusModels.models.find(m=>m.id===busId)||window.BusModels.models[0];
+    const rig=careerCoach(busId,true), {coach}=rig;
+    const roofHeight=coach.height*rig.sy, roofArm=roofHeight-suspensionPivot;
+    const lampZ=coach.headlamp[2]*rig.sz, lampHeight=coach.headlamp[1]*rig.sy;
     const beamSlices=[-1,1].map(side=>Array.from({length:33},(_,i)=>{
       const f=56*i/32;
-      return {x:side*(coach.headlamp[0]*2.7/coach.width+.055*f),z:f+coach.headlamp[2]*9.2/coach.length,
-        width:.26+.18*f,power:window.BusThreeLighting.beamPower(f,-.12-1.08*coach.headlamp[1])};
+      return {x:side*(coach.headlamp[0]*rig.sx+.055*f),z:f+lampZ,
+        width:.26+.18*f,power:window.BusThreeLighting.beamPower(f,-rig.baseY-lampHeight)};
     }));
     const beamPaths=new Map();
     function headlightFootprint(layers) {
@@ -590,6 +644,11 @@
       const s=surface(canvas,window.BusSettings.current.resolutionScale);
       if(!s) return;
       const {ctx,w,h}=s, b=state.bus, px=Math.max(3.7,Math.min(w/58,h/63,11));
+      const motion=suspension(b), ct=Math.cos(b.heading), st=Math.sin(b.heading);
+      const roofX=motion.sway+roofArm*Math.sin(motion.roll);
+      const roofY=roofArm*Math.sin(motion.pitch)-motion.heave*.45;
+      const bodyX=b.x+ct*roofX-st*roofY, bodyY=b.y+st*roofX+ct*roofY;
+      const bodyHeading=b.heading+motion.yaw;
       rect(ctx,0,0,w,h,ruralBiome.grass);
       ctx.save(); ctx.translate(w/2,h*.68); ctx.scale(px,px); ctx.rotate(-b.heading); ctx.translate(-b.x,-b.y);
       rect(ctx,state.map.bounds.minX-120,state.map.bounds.minY-120,
@@ -637,7 +696,7 @@
         for(const p of stop.waiting) shadow(p.x,p.y,0,.45,.35,1.7);
       }
       for(const p of state.people) shadow(p.x,p.y,0,.45,.35,1.7);
-      shadow(b.x,b.y,b.heading,2.7,9.2,3);
+      shadow(bodyX,bodyY,bodyHeading,2.7,9.2,roofHeight+rig.baseY+motion.heave);
       ctx.globalAlpha=1;
       for(const l of lots) {
         if(Math.hypot(l.x-b.x,l.y-b.y)>Math.hypot(w,h)/px+12) continue;
@@ -706,8 +765,14 @@
         dot(ctx,1.15*dx,1.15*dy,.16,'#fa793e');
         ctx.restore();
       }
-      for(const c of state.cars) vehicle(ctx,c,false,c.color);
-      vehicle(ctx,b,true,busColor);
+      for(const c of state.cars) {
+        ctx.save(); ctx.translate(c.x,c.y); ctx.rotate(c.heading);
+        vehicleBody(ctx,1.85,4.25,c.color); ctx.restore();
+      }
+      overheadWheels(ctx,b,rig.wheels);
+      ctx.save(); ctx.translate(bodyX,bodyY); ctx.rotate(bodyHeading);
+      if(state.doorsOpen) rect(ctx,1.12,-2.91,.52,1.32,'#f0bd5d');
+      vehicleBody(ctx,2.7,9.2,busColor,true); ctx.restore();
       for(const p of state.people) {
         dot(ctx,p.x,p.y,.45,p.color); dot(ctx,p.x-.02,p.y-.06,.17,'#c49a78');
       }
@@ -721,13 +786,16 @@
         const layers=Math.round(20*level.shadowLayers);
         ctx.globalCompositeOperation='source-over';
         ctx.translate(w/2,h*.68); ctx.scale(px,px);
+        ctx.translate(motion.sway,0); ctx.rotate(motion.yaw);
+        ctx.translate((lampHeight-suspensionPivot)*Math.sin(motion.roll),-lampZ+(lampHeight-suspensionPivot)*Math.sin(motion.pitch));
+        ctx.scale(1,Math.max(.6,Math.min(1.5,1+motion.pitch*4)));
+        ctx.translate(0,lampZ);
         ctx.fillStyle='#f7dc9c';
         ctx.globalAlpha=light.night*(.40+.12*level.lighting)/layers;
         for(const path of headlightFootprint(layers)) ctx.fill(path);
       }
       ctx.restore();
       // Keep stop identifiers upright as the map underneath follows the bus.
-      const ct=Math.cos(b.heading),st=Math.sin(b.heading);
       for(const [i,stop] of state.stops.entries()) {
         const dx=stop.x-b.x,dy=stop.y-b.y,x=w/2+(dx*ct+dy*st)*px,y=h*.68+(-dx*st+dy*ct)*px;
         if(x<10||y<10||x>w-10||y>h-10) continue;

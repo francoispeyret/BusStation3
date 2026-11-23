@@ -25,6 +25,36 @@ test('indexed uploads reproduce fleet positions, light markers and triangle orde
   for (const bus of BusModels.models) assert.ok(verifyTriangles(BusModels.mesh(bus.id)));
 });
 
+test('articulated fleet keeps the arcade tyres at their axles and steers only the front pair', () => {
+  const [r,g,b]=BusMesh.rgb('#35444b');
+  function tread(mesh,x=0,y=0,z=0) {
+    const vertices=[], d=mesh.data;
+    for(let i=0;i<d.length;i+=6) {
+      if(d[i+3]===r && d[i+4]===g && d[i+5]===b) vertices.push([d[i]+x,d[i+1]+y,d[i+2]+z]);
+    }
+    return vertices;
+  }
+  for(const {id} of BusModels.models) for(const lowDetail of [false,true]) {
+    const {body,wheels}=BusModels.parts(id,lowDetail);
+    assert.equal(wheels.length,id==='nocturne'?6:4);
+    assert.equal(tread(body).length,0);
+    const front=wheels.filter(w=>w.front);
+    assert.equal(front.length,2);
+    assert.equal(front[0].z,Math.max(...wheels.map(w=>w.z)));
+    assert.equal(front[0].z,front[1].z);
+    assert.equal(front[0].x,-front[1].x);
+
+    const assembled=[];
+    for(const wheel of wheels) {
+      const local=tread(wheel.mesh);
+      assert.ok(local.length>0);
+      for(const [,y,z] of local) assert.ok(Math.abs(Math.hypot(y,z)-wheel.radius)<1e-10);
+      assembled.push(...tread(wheel.mesh,wheel.x,wheel.y,wheel.z));
+    }
+    assert.deepEqual(assembled,tread(BusModels.mesh(id,lowDetail)));
+  }
+});
+
 test('packing respects final per-vertex colours and signed coordinates', () => {
   const mesh = new BusMesh.Mesh();
   for (let z=0; z<4; z++) mesh.quad([0,0,z], [1,0,z], [1,1,z], [0,1,z], '#123456');

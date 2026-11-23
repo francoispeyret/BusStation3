@@ -3,8 +3,9 @@
   'use strict';
   const {Mesh, lettering, turn:TAU} = window.BusMesh;
 
-  function wheel(m,side,z,segments=14,halfWidth=1.16,hub='#dfd8bb') {
-    const x=side*halfWidth, y=.52;
+  const wheelRadius=.46, axleHeight=.52;
+
+  function drawWheel(m,side,x,y,z,segments,hub,articulated) {
     const loop=(offset,rad,col) => {
       const a=x+side*offset;
       for(let i=0;i<segments;i++) {
@@ -14,13 +15,35 @@
     };
     for(let i=0;i<segments;i++) {
       const u=i*TAU/segments,v=(i+1)*TAU/segments, ax=x+side*.12, bx=x-side*.17;
-      m.quad([ax,y+.46*Math.cos(u),z+.46*Math.sin(u)],[bx,y+.46*Math.cos(u),z+.46*Math.sin(u)],[bx,y+.46*Math.cos(v),z+.46*Math.sin(v)],[ax,y+.46*Math.cos(v),z+.46*Math.sin(v)],'#35444b');
+      m.quad([ax,y+wheelRadius*Math.cos(u),z+wheelRadius*Math.sin(u)],[bx,y+wheelRadius*Math.cos(u),z+wheelRadius*Math.sin(u)],[bx,y+wheelRadius*Math.cos(v),z+wheelRadius*Math.sin(v)],[ax,y+wheelRadius*Math.cos(v),z+wheelRadius*Math.sin(v)],'#35444b');
     }
-    loop(.12,.46,'#313d44'); loop(.125,.28,hub);
+    loop(.12,wheelRadius,'#313d44'); loop(.125,.28,hub);
     if(segments>8) { loop(.13,.18,'#75888a'); loop(.135,.095,'#cfd8ce'); }
+    if(articulated) {
+      // Steering exposes the inner sidewall. The hub slots make rolling visible.
+      loop(-.17,wheelRadius,'#313d44');
+      const face=x+side*.128;
+      const point=(angle,r)=>[face,y+r*Math.cos(angle),z+r*Math.sin(angle)];
+      for(let i=0;i<5;i++) {
+        const a=i*TAU/5;
+        m.quad(point(a-.18,.197),point(a+.18,.197),point(a+.14,.256),point(a-.14,.256),'#52626a');
+      }
+    }
   }
 
-  function alpineCoach(lowDetail) {
+  // Axles are listed from rear to front. The arcade mesh keeps its original triangle/layer order.
+  function addWheels(body,wheelParts,side,axles,lowDetail,halfWidth=1.16,hub='#dfd8bb') {
+    const x=side*halfWidth, segments=lowDetail?8:14;
+    for(const z of axles) {
+      if(wheelParts) {
+        const mesh=new Mesh();
+        drawWheel(mesh,side,0,0,0,segments,hub,true);
+        wheelParts.push({mesh,x,y:axleHeight,z,front:z===axles[axles.length-1],radius:wheelRadius});
+      } else drawWheel(body,side,x,axleHeight,z,segments,hub,false);
+    }
+  }
+
+  function alpineCoach(lowDetail,wheelParts) {
     const m=new Mesh();
     // Canvas draws exterior trim after the body and luggage after the rack.
     // A triangle's centre depth alone cannot order small decals on a long face.
@@ -92,7 +115,7 @@
         m.box(s*1.19,1.77,z,.02,.66,.73,'#5d98a4');
         m.box(s*1.203,2.19,z,.014,.19,.72,'#77aeb7');
       }
-      for(const z of [-1.55,1.54]) wheel(m,s,z,lowDetail?8:14);
+      addWheels(m,wheelParts,s,[-1.55,1.54],lowDetail);
       m.box(s*1.25,2.1,1.77,.27,.055,.09,'#586a68');
       m.box(s*1.39,2.01,1.77,.11,.25,.15,'#52666a');
     }
@@ -150,7 +173,7 @@
       headlamp:[.82,1.06,2.873], taillamp:[.93,.87,-2.873]}
   ];
 
-  function buildCoach(model, lowDetail) {
+  function buildCoach(model,lowDetail,wheelParts) {
     const m=new Mesh();
     m.layers=[];
     const halfWidth=model.width/2, end=model.length/2;
@@ -187,7 +210,7 @@
       for(let i=0;i<count;i++) pane(true,s*(halfWidth+.009),start+(i+.5)*step,bottom,step-.07,height,glass);
     }
     function wheels(s,axles,hub) {
-      for(const z of axles) wheel(m,s,z,lowDetail?8:14,halfWidth-.016,hub);
+      addWheels(m,wheelParts,s,axles,lowDetail,halfWidth-.016,hub);
     }
     function bumper(sign,color) {
       m.box(0,.49,sign*(end-.004),model.width-.20,.13,.12,color);
@@ -363,9 +386,14 @@
     return m;
   }
 
-  function mesh(id,lowDetail=false) {
+  function mesh(id,lowDetail=false,wheelParts) {
     const model=models.find(item=>item.id===id)||models[0];
-    return model===models[0] ? alpineCoach(lowDetail) : buildCoach(model,lowDetail);
+    return model===models[0] ? alpineCoach(lowDetail,wheelParts) : buildCoach(model,lowDetail,wheelParts);
   }
-  window.BusModels={models,mesh};
+
+  function parts(id,lowDetail=false) {
+    const wheels=[];
+    return {body:mesh(id,lowDetail,wheels),wheels};
+  }
+  window.BusModels={models,mesh,parts};
 })();
