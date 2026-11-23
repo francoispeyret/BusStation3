@@ -131,40 +131,18 @@
   }
 
   function loadArcade() {
-    const minimumMs = 5000;
-    const bar = $('loading-progress'), percent = $('loading-percent');
-    let startedAt, ready = false;
-    function progress(now) {
-      startedAt ??= now;
-      const value = Math.min(ready ? 100 : 95, Math.floor(100 * (now - startedAt) / minimumMs));
-      if (bar.value !== value) {
-        bar.value = value;
-        percent.textContent = value + ' %';
-      }
-      if (value < 100) requestAnimationFrame(progress);
-      else requestAnimationFrame(() => {
-        $('loading-screen').hidden = true;
-        document.querySelector('.topbar').inert = false;
-        document.querySelector('.shell').inert = false;
-        home(false);
-      });
+    road.hidden = false;
+    try {
+      renderer = window.BusWorld.init(road, settings.current);
+      renderer.render(demo);
+    } catch {
+      renderer?.dispose();
+      renderer = null;
     }
-    requestAnimationFrame(progress);
-    // Paint the cover before preparing the shaders and the first section of road.
-    Promise.allSettled([$('loading-art').decode(), document.fonts.ready]).then(() => {
-      requestAnimationFrame(() => {
-        road.hidden = false;
-        try {
-          renderer = window.BusWorld.init(road, settings.current);
-          renderer.render(demo);
-        } catch {
-          renderer?.dispose();
-          renderer = null;
-          road.hidden = true;
-        }
-        ready = true;
-      });
-    });
+    home(false);
+    $('loading-screen').hidden = true;
+    document.querySelector('.topbar').inert = false;
+    document.querySelector('.shell').inert = false;
   }
 
   function setText(el, value) { if (el.textContent !== value) el.textContent = value; }
