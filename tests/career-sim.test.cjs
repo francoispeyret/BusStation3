@@ -24,59 +24,104 @@ function driveUntil(sim, controls, reached) {
   assert.fail('The bus did not reach the waypoint within 15 s');
 }
 
-test('collect fares once at the station, then take the first rider to the market', () => {
+test('waiting at the station boards riders automatically and braking at the market lets them off first', () => {
   const events = [];
   const sim = create({onEvent: event => events.push(event)});
   const state = sim.state;
+  state.cars = [];
+  state.cones = [];
   const origin = state.nearbyStop;
   const waiting = origin.waiting.length;
   const rider = origin.waiting[0];
   assert.equal(origin.id, 'gare');
-  assert.equal(sim.toggleDoors(), true);
+  sim.update(1/60);
+  assert.equal(state.doorsOpen, true);
   assert.equal(state.people[0].phase, 'boarding');
   tick(sim, .4, {accelerate: true});
   assert.equal(state.bus.speed, 0);
   assert.equal(state.earnings, 0);
   assert.notEqual(state.people[0].x, rider.x);
-  assert.equal(sim.toggleDoors(), false);
   tick(sim, 2.6);
-  assert.equal(state.serviceComplete, true);
+  assert.equal(state.doorsOpen, false);
   assert.equal(state.passengers.length, waiting);
   assert.equal(state.earnings, waiting * 3);
   assert.equal(events.filter(e => e.type === 'boarding').length, waiting);
-  sim.toggleDoors();
-  sim.toggleDoors();
-  tick(sim, .1);
-  assert.equal(state.earnings, waiting * 3);
-  assert.equal(sim.toggleDoors(), true);
 
   const market = state.stops.find(stop => stop.id === rider.destination);
   driveUntil(sim, {accelerate:true}, bus => bus.y <= market.y + 23);
-  driveUntil(sim, {brake:true}, bus => bus.speed <= .5);
+  driveUntil(sim, {brake:true}, () => state.doorsOpen);
   assert.equal(state.nearbyStop.id, rider.destination);
-  assert.equal(sim.toggleDoors(), true);
   assert.equal(state.people[0].phase, 'alighting');
   assert.equal(state.people[0].id, rider.id);
-  tick(sim, 5);
+  const dockedY = state.bus.y;
+  tick(sim, 6, {brake:true});
+  assert.equal(state.doorsOpen, false);
+  assert.equal(state.bus.speed, 0);
+  assert.equal(state.bus.y, dockedY, 'a held brake keeps the bus still after the doors close');
   assert.equal(state.passengers.some(p => p.id === rider.id), false);
   assert.equal(events.filter(e => e.type === 'alighting').length, 1);
   assert.equal(state.earnings, events.filter(e => e.type === 'boarding').reduce((sum, e) => sum + e.fare, 0));
+  sim.update(1/60);
+  tick(sim, .3, {brake:true});
+  assert.ok(state.bus.speed < 0, 'releasing and pressing the brake again selects reverse');
 });
 
-test('doors require a stationary bus at a stop; demand returns after the bus leaves', () => {
-  const sim = create();
-  const start = sim.state.stops[0];
-  sim.toggleDoors();
+test('a stop is served once per visit and a moving bus can pass waiting riders', () => {
+  const doorEvents = [];
+  const sim = create({onEvent:event => { if (event.type === 'doors') doorEvents.push(event); }});
+  const state = sim.state, start = state.nearbyStop;
+  state.cars = [];
+  state.cones = [];
+  const firstGroup = start.waiting.length;
+  tick(sim, 3);
+  assert.equal(state.doorsOpen, false);
+  const firstEarnings = state.earnings;
+  assert.equal(firstEarnings, firstGroup * 3);
+  assert.equal(doorEvents.length, 2);
   tick(sim, 35);
   assert.equal(start.waiting.length, 0);
-  sim.toggleDoors();
-  tick(sim, .6, {accelerate: true});
-  assert.equal(sim.state.nearbyStop, start);
-  assert.equal(sim.toggleDoors(), false);
-  tick(sim, 3.5, {accelerate: true});
-  assert.equal(sim.state.nearbyStop, null);
-  assert.equal(sim.toggleDoors(), false);
-  assert.ok(start.waiting.length > 0);
+  assert.equal(state.earnings, firstEarnings);
+  assert.equal(state.doorsOpen, false);
+  assert.equal(doorEvents.length, 2, 'standing at the same platform does not reopen the doors');
+
+  // Back away from the platform until fresh passengers can arrive, then drive past them.
+  driveUntil(sim, {brake:true}, bus => bus.y > start.y + 39);
+  assert.equal(state.nearbyStop, null);
+  const waiting = start.waiting.length;
+  assert.ok(waiting > 0);
+  driveUntil(sim, {accelerate:true}, () => state.nearbyStop === start);
+  assert.ok(state.bus.speed > 5);
+  driveUntil(sim, {accelerate:true}, bus => bus.y < start.y - 12);
+  assert.equal(start.waiting.length, waiting);
+  assert.equal(state.earnings, firstEarnings);
+  assert.equal(doorEvents.length, 2);
+
+  // Stop beyond the platform, reverse towards it and coast to a standstill there.
+  driveUntil(sim, {brake:true}, bus => bus.speed < -4 && bus.y >= start.y - 8);
+  driveUntil(sim, {}, () => state.doorsOpen);
+  assert.equal(state.nearbyStop, start);
+  tick(sim, 5);
+  assert.equal(state.doorsOpen, false);
+  assert.equal(start.waiting.length, 0);
+  assert.equal(state.earnings, firstEarnings + waiting * 3);
+  assert.equal(doorEvents.length, 4);
+});
+
+test('a full bus automatically lets a rider off and boards only as many as there are free seats', () => {
+  const sim = create();
+  const state = sim.state, station = state.nearbyStop;
+  const queue = station.waiting.map(person => person.id);
+  state.passengers = Array.from({length:24}, (_,i) => ({id:100+i, destination:i === 0 ? station.id : 'marche'}));
+  sim.update(1/60);
+  assert.equal(state.people[0].id, 100);
+  assert.equal(state.people[0].phase, 'alighting');
+  tick(sim, 5);
+  assert.equal(state.passengers.length, 24);
+  assert.equal(state.passengers.some(person => person.id === 100), false);
+  assert.ok(state.passengers.some(person => person.id === queue[0]));
+  assert.deepEqual(station.waiting.map(person => person.id), queue.slice(1));
+  assert.equal(state.earnings, 3);
+  assert.equal(state.doorsOpen, false);
 });
 
 test('the driver can turn onto a second road that leads out into the countryside', () => {
@@ -161,7 +206,7 @@ test('traffic approaches its signals, stops on red and leaves on green', () => {
 // Car 0 travels north on the long straight from the depot to the central lights.
 function collisionScenario({offset = 0, gap = 9, heading = 0, busSpeed = 19, carSpeed = 3, cruise = 8} = {}) {
   const events = [];
-  const sim = create({onEvent:e => events.push(e)});
+  const sim = create({onEvent:event => { if (event.type === 'collision') events.push(event); }});
   const {bus, cars} = sim.state, car = cars[0];
   sim.state.cars = [car];
   sim.state.cones = [];

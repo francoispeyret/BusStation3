@@ -7,7 +7,7 @@
   <title>Carrière · Bus Station 3</title>
   <link rel="icon" href="assets/bus-mark.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css?v=20">
-  <link rel="stylesheet" href="career.css?v=3">
+  <link rel="stylesheet" href="career.css?v=4">
   <link rel="stylesheet" href="career-profiles.css?v=1">
   <script defer src="assets/vendor/number-flow-0.6.2.js"></script>
   <script defer src="mesh.js?v=4"></script>
@@ -30,16 +30,15 @@
   <script defer src="career-profiles.js?v=1"></script>
   <script defer src="career-physics.js?v=1"></script>
   <script defer src="career-motion.js?v=1"></script>
-  <script defer src="career-sim.js?v=4"></script>
+  <script defer src="career-sim.js?v=5"></script>
   <script defer src="career-render.js?v=4"></script>
-  <script defer src="career.js?v=4"></script>
+  <script defer src="career.js?v=5"></script>
 </head>
 <body class="career-app">
   <svg class="career-icons" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
     <symbol id="ic-back" viewBox="0 0 24 24"><path d="m10 5-7 7 7 7M4 12h17"/></symbol>
     <symbol id="ic-pause" viewBox="0 0 24 24"><path d="M8 5v14m8-14v14" stroke-width="3.5"/></symbol>
     <symbol id="ic-map" viewBox="0 0 24 24"><path d="m2.5 5.5 6-2 7 3 6-2v14l-6 2-7-3-6 2zm6-2v14m7-11v14"/></symbol>
-    <symbol id="ic-door" viewBox="0 0 24 24"><path d="M4 21V3h16v18zm8-18v18M8 8v6m8-6v6"/></symbol>
     <symbol id="ic-ticket" viewBox="0 0 24 24"><path d="M3 5h18v5a2 2 0 0 0 0 4v5H3v-5a2 2 0 0 0 0-4zm12 3v1m0 3v1m0 3v1"/></symbol>
     <symbol id="ic-people" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6m2 3a5 5 0 0 1 3 4v2"/></symbol>
     <symbol id="ic-speed" viewBox="0 0 24 24"><path d="M4 18a9 9 0 1 1 16 0M12 5v2m6 1-5 6"/><circle cx="12" cy="15" r="1.5"/></symbol>
@@ -61,7 +60,7 @@
     <noscript>Active JavaScript pour prendre ton service.</noscript>
     <section id="service" aria-label="Service en carrière" hidden>
       <div id="city-stage">
-        <canvas id="city-view" tabindex="-1" aria-label="Conduite du bus. Braque avec les flèches ou en glissant sur la route. E ouvre les portes et M ouvre le plan."></canvas>
+        <canvas id="city-view" tabindex="-1" aria-label="Conduite du bus. Braque avec les flèches ou en glissant sur la route. Immobilise le bus à un arrêt pour la montée et la descente automatiques des passagers. M ouvre le plan."></canvas>
         <div class="stop-display">
           <span id="stop-number"></span>
           <div><span class="instrument-label" id="stop-label"></span><strong id="stop-name"></strong></div>
@@ -73,10 +72,7 @@
         </button>
         <div id="fare-notice" class="notice" aria-hidden="true"></div>
         <div id="fare-status" class="notice-status" role="status" aria-atomic="true"></div>
-        <div class="door-prompt" id="door-prompt">
-          <span id="platform-status"></span>
-          <button id="doors" class="door-button" type="button"><svg class="icon" aria-hidden="true"><use href="#ic-door"/></svg><span id="door-action">Ouvrir les portes</span><kbd>E</kbd></button>
-        </div>
+        <div id="platform-status" role="status" aria-atomic="true"></div>
       </div>
       <div class="instruments">
         <div class="instrument fare"><svg class="icon" aria-hidden="true"><use href="#ic-ticket"/></svg><div><span class="instrument-label">Caisse</span><div class="reading"><strong><number-flow id="balance">0</number-flow></strong><small>€$</small></div></div></div>
@@ -85,7 +81,7 @@
         <button id="horn" class="career-tool" type="button" aria-label="Klaxonner" title="Klaxonner (H)"><svg class="icon" aria-hidden="true"><use href="#ic-horn"/></svg></button>
         <div class="district-indicator"><i aria-hidden="true"></i><span id="district"></span></div>
       </div>
-      <div class="service-help"><span><kbd>↑</kbd> Accélérer</span><span><kbd>↓</kbd> Freiner / reculer</span><span><kbd>←</kbd><kbd>→</kbd> Braquer</span><span><kbd>E</kbd> Portes</span><span><kbd>M</kbd> Plan</span></div>
+      <div class="service-help"><span><kbd>↑</kbd> Accélérer</span><span><kbd>↓</kbd> Freiner / reculer</span><span><kbd>←</kbd><kbd>→</kbd> Braquer</span><span><kbd>M</kbd> Plan</span></div>
       <div class="career-touch" role="group" aria-label="Commandes tactiles">
         <div><button type="button" data-drive="left" aria-label="Braquer à gauche">←</button><button type="button" data-drive="right" aria-label="Braquer à droite">→</button></div>
         <div><button type="button" data-drive="brake" aria-label="Freiner ou reculer">Frein</button><button type="button" data-drive="accelerate" aria-label="Accélérer">Gaz</button></div>

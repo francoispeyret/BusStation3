@@ -292,13 +292,13 @@
     return nearest;
   }
 
-  function drive(state, dt, input) {
+  function drive(state, dt, input, brakeHeldAtStop) {
     const bus = state.bus;
     if (state.doorsOpen) return;
     let acceleration = 0;
     if (input.brake) acceleration = bus.speed > .15 ? -13.5 : -3.5;
     else if (input.accelerate) acceleration = bus.speed < -.15 ? 9 : 6.6;
-    if (acceleration) bus.speed = clamp(bus.speed + acceleration * dt, -4.2, topSpeed);
+    if (acceleration && !brakeHeldAtStop) bus.speed = clamp(bus.speed + acceleration * dt, -4.2, topSpeed);
     else bus.speed = Math.sign(bus.speed) * Math.max(0, Math.abs(bus.speed) - (.85 + .003 * bus.speed * bus.speed) * dt);
     const drag = clamp(input.steer || 0, -1, 1);
     const steering = Math.max(drag, Number(!!input.right)) - Math.max(-drag, Number(!!input.left));
@@ -393,7 +393,7 @@
       if (site) state.cones.push({id, ...site, hit:null});
     }
     updateLights(state);
-    let serial = 0, activeStop = null;
+    let serial = 0, brakeHeldAtStop = false;
     function queuePassenger(stop, index) {
       const number = serial++;
       const choices = stops.filter(item => item !== stop);
@@ -413,23 +413,36 @@
         const d = distance(state.bus, stop);
         if (d < best) { best = d; nearest = stop; }
       }
+      if (nearest !== state.nearbyStop) state.serviceComplete = false;
       state.nearbyStop = nearest;
       state.district = state.bus.x > map.townEdge ? 'Campagne' : 'Centre-ville';
     }
 
-    function updateService(dt) {
-      if (!activeStop || state.serviceComplete) return;
+    function startTransfer(stop) {
+      const leaving = state.passengers.find(p => p.destination === stop.id);
+      const person = leaving || (state.passengers.length < capacity && stop.waiting.shift());
+      if (!person) return false;
       const door = offset(state.bus, forwardOf(state.bus.heading), 2.7, 1.45);
-      if (!state.people.length) {
-        const leaving = state.passengers.find(p => p.destination === activeStop.id);
-        const joining = state.passengers.length < capacity && activeStop.waiting[0];
-        if (!leaving && !joining) { state.serviceComplete = true; return; }
-        const person = leaving || activeStop.waiting.shift();
-        const sidewalk = offset(activeStop, forwardOf(activeStop.heading), 1 + (person.id % 2), 2.3);
-        const start = leaving ? door : {x: person.x, y: person.y};
-        const end = leaving ? sidewalk : door;
-        state.people.push({...person, ...start, phase: leaving ? 'alighting' : 'boarding',
-          progress: 0, start, end});
+      const sidewalk = offset(stop, forwardOf(stop.heading), 1 + (person.id % 2), 2.3);
+      const start = leaving ? door : {x:person.x, y:person.y};
+      state.people.push({...person, ...start, phase:leaving ? 'alighting' : 'boarding',
+        progress:0, start, end:leaving ? sidewalk : door});
+      return true;
+    }
+
+    function updateService(dt, input, previousSpeed) {
+      const stop = state.nearbyStop;
+      if (!stop || state.serviceComplete) return;
+      if (!state.doorsOpen) {
+        const pullingAway = input.accelerate && !input.brake && previousSpeed >= 0;
+        if (Math.abs(bus.speed) > .4 || pullingAway) return;
+        if (!startTransfer(stop)) {
+          state.serviceComplete = true;
+          return;
+        }
+        bus.speed = 0;
+        state.doorsOpen = true;
+        onEvent({type:'doors', message:'Portes ouvertes · ' + stop.name});
       }
       const person = state.people[0];
       person.progress = Math.min(1, person.progress + dt / .95);
@@ -440,46 +453,29 @@
       if (person.phase === 'boarding') {
         state.passengers.push({id: person.id, color: person.color, destination: person.destination});
         state.earnings += fare;
-        onEvent({type: 'boarding', fare, stopName: activeStop.name, message: 'Passager à bord · +' + fare + ' €$'});
+        onEvent({type: 'boarding', fare, stopName: stop.name, message: 'Passager à bord · +' + fare + ' €$'});
       } else {
         state.passengers = state.passengers.filter(p => p.id !== person.id);
-        onEvent({type: 'alighting', stopName: activeStop.name, message: 'Descente · ' + activeStop.name});
+        onEvent({type: 'alighting', stopName: stop.name, message: 'Descente · ' + stop.name});
       }
-    }
-
-    function toggleDoors() {
-      if (state.doorsOpen) {
-        if (!state.serviceComplete) {
-          onEvent({type: 'hint', message: 'Attends la fin des échanges.'});
-          return false;
-        }
+      if (!startTransfer(stop)) {
         state.doorsOpen = false;
-        state.serviceComplete = false;
-        activeStop = null;
+        state.serviceComplete = true;
+        // A brake held throughout boarding keeps the bus parked until released.
+        brakeHeldAtStop = !!input.brake;
         onEvent({type: 'doors', message: 'Portes fermées · Bonne route !'});
-        return true;
       }
-      if (!state.nearbyStop || Math.abs(state.bus.speed) > .8) {
-        onEvent({type: 'hint', message: state.nearbyStop ? 'Immobilise le bus pour ouvrir.' : 'Rapproche-toi d’un arrêt.'});
-        return false;
-      }
-      state.bus.speed = 0;
-      state.doorsOpen = true;
-      activeStop = state.nearbyStop;
-      onEvent({type: 'doors', message: 'Portes ouvertes · ' + activeStop.name});
-      updateService(0);
-      return true;
     }
 
     function step(dt, input) {
       state.time += dt;
       updateLights(state);
       const oldX = bus.x, oldY = bus.y, oldHeading = bus.heading, oldSpeed = bus.speed;
-      drive(state, dt, input);
+      if (!input.brake) brakeHeldAtStop = false;
+      drive(state, dt, input, brakeHeldAtStop);
       bus.vx = (bus.x - oldX)/dt;
       bus.vy = (bus.y - oldY)/dt;
       bus.yawRate = (bus.heading - oldHeading)/dt;
-      updateService(dt);
       for (const stop of stops) {
         if (state.time >= stop.nextArrival && stop.waiting.length < 4 && distance(state.bus, stop) > 35) {
           queuePassenger(stop, stop.waiting.length);
@@ -513,8 +509,9 @@
         }
       }
       updateCones(state, sites, random, onEvent);
-      window.CareerMotion.update(bus, dt, oldSpeed, input);
       setNearbyStop();
+      updateService(dt, input, oldSpeed);
+      window.CareerMotion.update(bus, dt, oldSpeed, input);
     }
 
     function update(seconds, input = {}) {
@@ -524,7 +521,7 @@
       const count = Math.ceil(activeTime * 30);
       for (let i = 0; i < count; i++) step(activeTime / count, input);
     }
-    return {state, update, toggleDoors};
+    return {state, update};
   }
   window.CareerSim = Object.freeze({create});
 })();

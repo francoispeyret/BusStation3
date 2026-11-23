@@ -59,17 +59,14 @@
     balanceDial(driver.balance, animate);
     onboardDial(passengers.length, animate);
     speedDial(Math.abs(Math.round(bus.speed * 3.6)), animate);
-    $('door-prompt').hidden = !nearbyStop && !doorsOpen;
+    let platformStatus = '';
     if (nearbyStop) {
-      const moving = Math.abs(bus.speed) > .8;
-      let info = nearbyStop.name;
-      if (moving) info += ' · Immobilise le bus';
-      else if (doorsOpen) info += serviceComplete ? ' · Échanges terminés' : ' · Échanges en cours';
-      else if (nearbyStop.waiting.length) info += ' · ' + nearbyStop.waiting.length + ' en attente';
-      write('platform-status', info);
-      write('door-action', doorsOpen ? 'Fermer les portes' : 'Ouvrir les portes');
-      $('doors').disabled = moving || (doorsOpen && !serviceComplete);
+      let instruction = 'Immobilise le bus pour ouvrir les portes';
+      if (doorsOpen) instruction = 'Portes ouvertes · Échanges en cours';
+      else if (serviceComplete) instruction = 'Tu peux repartir';
+      platformStatus = nearbyStop.name + ' · ' + instruction;
     }
+    write('platform-status', platformStatus);
   }
 
   function feedback(event) {
@@ -89,8 +86,6 @@
       notices.push({type:'cone', title:'Oups !', message:event.message});
     } else if (event.type === 'doors' && sim.state.doorsOpen) {
       airBrake();
-    } else if (event.type === 'hint') {
-      notices.push({type:'hint', title:'Portes', message:event.message});
     }
     lastHud = 0;
   }
@@ -220,12 +215,6 @@
     $('profiles').querySelector('button')?.focus();
   }
 
-  function doors() {
-    sim.toggleDoors();
-    refreshInstruments();
-  }
-
-  $('doors').addEventListener('click', doors);
   $('horn').addEventListener('click', () => audio.horn());
   $('pause-service').addEventListener('click', () => openMenu(false));
   $('open-map').addEventListener('click', () => openMenu(true));
@@ -252,11 +241,10 @@
     if (control) {
       event.preventDefault();
       held.set(event.code || key, control);
-    } else if (['e','h','m','p','Escape'].includes(key)) {
+    } else if (['h','m','p','Escape'].includes(key)) {
       event.preventDefault();
       if (event.repeat) return;
-      if (key === 'e') doors();
-      else if (key === 'h') audio.horn();
+      if (key === 'h') audio.horn();
       else openMenu(key === 'm');
     }
   });

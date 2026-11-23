@@ -38,7 +38,7 @@
 #service { display:flex; flex-direction:column; height:calc(var(--viewport) - var(--header-height)); }
 #city-stage { position:relative; flex:1; min-height:130px; isolation:isolate; overflow:hidden; background:#9dcdd0; }
 #city-view { display:block; width:100%; height:100%; touch-action:none; outline:none; }
-.stop-display, .network-button, .door-prompt { position:absolute; }
+.stop-display, .network-button, #platform-status { position:absolute; }
 .stop-display {
   display:flex;
   align-items:center;
@@ -81,19 +81,13 @@
 #mini-map { display:block; width:100%; height:auto; aspect-ratio:1.65; border-radius:9px; }
 .network-button>span { display:flex; align-items:center; justify-content:center; gap:4px; padding:5px 2px 3px; font-size:.73rem; font-weight:700; }
 .network-button .icon { color:var(--green); }
-.door-prompt {
+#platform-status {
   left:50%;
   bottom:clamp(10px,2vh,24px);
   transform:translateX(-50%);
-  display:flex;
-  flex-direction:column;
-  align-items:center;
-  gap:5px;
   width:max-content;
   max-width:96%;
-}
-#platform-status {
-  padding:3px 10px;
+  pointer-events:none;
   border-radius:6px;
   background:#201c29e8;
   color:#fff1d5;
@@ -101,21 +95,7 @@
   font-weight:bold;
   text-align:center;
 }
-.door-button {
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  gap:9px;
-  min-height:40px;
-  padding:7px 12px;
-  border-radius:9px;
-  background:var(--yellow);
-  box-shadow:0 3px 0 #985f38;
-  color:#302536;
-  font-weight:700;
-}
-.door-button:disabled { background:#e7dfca; box-shadow:none; }
-.door-button kbd { min-width:19px; height:20px; border-color:#382a3e38; background:transparent; color:inherit; box-shadow:none; font-size:.7rem; }
+#platform-status:not(:empty) { padding:5px 10px; }
 #fare-notice { inset:20% 8% auto; height:23%; }
 #fare-notice .notice-card { animation-duration:.85s; }
 #fare-notice .notice-headline { font-size:clamp(27px,4.5vw,48px); }
@@ -172,7 +152,7 @@
 .service-menu-actions button { min-height:38px; padding:10px 13px; font-size:.86rem; }
 @media (pointer:coarse), (max-width:700px) {
   .career-touch { display:flex; }
-  .service-help,.door-button kbd { display:none; }
+  .service-help { display:none; }
 }
 @media (max-width:600px) {
   .career-app { --header-height:46px; }
@@ -202,7 +182,7 @@
   .career-touch button { min-height:35px; }
   .instruments { padding-block:4px; }
   .network-button { width:92px; }
-  .door-prompt { flex-direction:row; bottom:7px; }
+  #platform-status { bottom:7px; }
   .stop-display,.network-button { top:7px; }
 }
 @media (max-width:380px) {
