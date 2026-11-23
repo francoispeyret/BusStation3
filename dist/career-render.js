@@ -74,33 +74,41 @@
       [bx-nx,height,by-ny],[ax-nx,height,ay-ny],color);
   }
 
-  function street(m,r) {
-    const {a,b,width}=r, dx=b.x-a.x, dy=b.y-a.y, len=Math.hypot(dx,dy);
-    const ux=dx/len, uy=dy/len, nx=-uy, ny=ux, half=width/2, urban=r.kind==='city';
-    const surface=urban ? cityBiome : ruralBiome;
-    function stripe(from,to,offset,w,h,color) {
-      groundQuad(m,a.x+ux*from+nx*offset,a.y+uy*from+ny*offset,
-        a.x+ux*to+nx*offset,a.y+uy*to+ny*offset,w,h,color);
+  function roadMarkings({road,from,to},fill) {
+    const {a,b,width}=road, dx=b.x-a.x, dy=b.y-a.y, len=Math.hypot(dx,dy);
+    const ux=dx/len, uy=dy/len, half=width/2, urban=road.kind==='city';
+    const point=(d,off)=>[a.x+ux*d-uy*off,a.y+uy*d+ux*off];
+    function stripe(start,end,offset,w,h,color) {
+      if(end<=start) return;
+      const left=offset+w/2, right=offset-w/2;
+      fill([point(start,left),point(end,left),point(end,right),point(start,right)],color,h);
     }
-    stripe(-half,len+half,0,width+2*r.vergeWidth,.015,surface.verge);
-    stripe(-half,len+half,0,width,.035,surface.roadColor);
     for (const side of [-1,1]) {
-      stripe(half+1,len-half-1,side*(half-.24),.14,.061,'#f7db8c');
+      stripe(from+1,to-1,side*(half-.24),.14,.061,'#f7db8c');
       if (urban) {
-        stripe(half+1,len-half-1,side*(half+.19),.32,.049,'#f1e5c9');
-        for (let d=half+4;d<len-half-2;d+=5) {
+        stripe(from+1,to-1,side*(half+.19),.32,.049,'#f1e5c9');
+        for (let d=from+4;d<to-2;d+=5) {
           stripe(d,d+.065,side*(half+1.6),2.35,.052,'#aaa99e');
         }
       }
     }
-    for (let d=half+5;d<len-half-6;d+=9) {
-      stripe(d,Math.min(d+3.3,len-half-5),0,.18,.069,'#f4ebc9');
+    for (let d=from+5;d<to-5;d+=9) {
+      stripe(d,Math.min(d+3.3,to-5),0,.18,.069,'#f4ebc9');
     }
-    if (urban && len>38) {
-      for (const d of [half+2,len-half-4.6]) {
+    if (urban && to-from>10) {
+      for (const d of [from+2,to-4.6]) {
         for (let off=-half+1.1;off<half-.4;off+=1.45) stripe(d,d+2.6,off,.65,.068,'#e2dfd4');
       }
     }
+  }
+
+  function paintRoads(map,fill) {
+    const {surfaces,segments}=window.CareerRoads.build(map);
+    for(const {points,kind,material} of surfaces) {
+      const biome=kind==='city'?cityBiome:ruralBiome;
+      fill(points,biome[material],.035);
+    }
+    for(const segment of segments) roadMarkings(segment,fill);
   }
 
   function tree(m,variant) {
@@ -406,7 +414,10 @@
         }
       }
       place(asset('floor',()=>base),0,0,0);
-      for(const r of map.roads) street(roads,r);
+      paintRoads(map,(points,color,height)=>{
+        const vertices=points.map(([x,z])=>[x,height,z]);
+        for(let i=1;i<vertices.length-1;i++) roads.tri(vertices[0],vertices[i],vertices[i+1],color);
+      });
       place(asset('roads',()=>roads),0,0,0);
       // Each edge faces the same arcade mountain range outside the road network.
       const mountains=asset('skyline',window.BusSky.backdrop);
@@ -615,6 +626,7 @@
     ctx.restore();
   }
   function overhead(canvas,busId) {
+    let cachedMap, roadPaths;
     const footprints={tree:[3,3,6],tower:[9,10,19],shop:[9,6,7],station:[18,9,9],
       farmhouse:[7.4,6,6],mill:[6,6,10]};
     const busColor=({alpin:'#d96b59',lagon:'#66b3a7',ecolier:'#e8b44c',
@@ -654,11 +666,18 @@
       rect(ctx,state.map.bounds.minX-120,state.map.bounds.minY-120,
         state.map.townEdge-state.map.bounds.minX+120,state.map.bounds.maxY-state.map.bounds.minY+240,cityBiome.grass);
       ctx.lineCap='square';
-      for(const r of state.map.roads) line(ctx,r.a,r.b,r.width+2*r.vergeWidth,r.kind==='city'?cityBiome.verge:ruralBiome.verge);
-      for(const r of state.map.roads) line(ctx,r.a,r.b,r.width,r.kind==='city'?cityBiome.roadColor:ruralBiome.roadColor);
-      ctx.setLineDash([3.1,5.5]);
-      for(const r of state.map.roads) line(ctx,r.a,r.b,.17,'#e8dfc3');
-      ctx.setLineDash([]);
+      if(cachedMap!==state.map) {
+        roadPaths=new Map();
+        paintRoads(state.map,(points,color)=>{
+          if(!roadPaths.has(color)) roadPaths.set(color,new Path2D());
+          const path=roadPaths.get(color);
+          path.moveTo(...points[0]);
+          for(let i=1;i<points.length;i++) path.lineTo(...points[i]);
+          path.closePath();
+        });
+        cachedMap=state.map;
+      }
+      for(const [color,path] of roadPaths) { ctx.fillStyle=color; ctx.fill(path); }
       const light=serviceLight(state.time);
       const dir=light.direction, rayX=-dir.x/dir.y, rayY=dir.z/dir.y;
       const viewRange=Math.hypot(w,h)/px;
