@@ -25,6 +25,9 @@
   function layout(state) {
     const {roads, bounds, townEdge} = state.map, rand = random(3043), lots = [];
     const reserved = state.stops.map(s => ({x:s.x, y:s.y, radius:5.5}));
+    for (const s of state.map.fuelStations) {
+      reserved.push({x:s.x+6*Math.cos(s.heading), y:s.y+6*Math.sin(s.heading), radius:13});
+    }
     function place(x,y,yaw,type,radius,variant,size) {
       if (roads.some(r => segmentDistance(x,y,r) < radius+(r.kind==='country'?r.vergeWidth:.65))) return;
       if (reserved.some(l => Math.hypot(x-l.x,y-l.y) < radius+l.radius)) return;
@@ -181,6 +184,43 @@
     m.instance(clock,0,0,-5.56,Math.PI,1);
     m.box(0,4.24,-5.62,4.45,1.52,.16,roof);
     lettering(m,'GARE',0,5.49,-5.71,.16,CREAM,-1);
+  }
+
+  // Local X points away from the road. The marked bay at the origin is wide
+  // enough for the bus; pumps, posts and the kiosk stand beyond that bay.
+  function fillingStation(s) {
+    const m=new Mesh(), colour=s.id==='centre'?'#237c7c':'#bf6949';
+    const bay='#979690', metal='#e7dfc4';
+    groundQuad(m,5.25,-8.1,5.25,8.1,14,.087,bay);
+    for(const z of [-5.6,5.6]) {
+      groundQuad(m,-1.25,z,1.55,z,.15,.097,CREAM);
+      groundQuad(m,1.55,z,1.55,z-Math.sign(z)*1.3,.15,.098,CREAM);
+    }
+    // Compact glazed kiosk beside a cantilevered pump canopy.
+    m.box(10,.09,0,4.2,3.05,9,'#e6d6a7');
+    m.box(7.87,.79,-1.85,.08,1.75,3,'#527f8c');
+    m.box(7.87,.22,1.35,.08,2.3,1.45,'#49727d');
+    m.box(9.9,3.14,0,4.6,.38,9.35,colour);
+    for(const z of [-3.4,3.4]) {
+      m.box(6.8,.09,z,.39,4.68,.39,'#7e918f');
+      m.box(3.65,.09,z,1.65,.22,1.52,metal);
+      m.box(3.65,.31,z,.87,1.53,.89,colour);
+      m.box(3.65,1.84,z,.97,.71,.99,metal);
+      m.box(3.151,2.01,z,.028,.31,.63,'#293e46');
+      beam(m,[3.45,1.11,z+.47],[3.35,.68,z+.68],.07,.07,INK);
+      beam(m,[3.35,.68,z+.68],[3.40,1.87,z+.52],.07,.06,INK);
+    }
+    m.box(5,4.74,0,7.4,.22,12.2,metal);
+    m.box(5,4.96,0,7.5,.52,12.3,colour);
+    m.box(5,5.48,0,7.55,.12,12.35,GOLD);
+    // The sign faces drivers arriving from either end of the street.
+    m.box(3,.09,7.45,.36,3.7,.36,'#526665');
+    m.box(3,3.75,7.45,3.15,1.32,.32,colour);
+    for(const side of [-1,1]) {
+      lettering(m,'ESSENCE',3,4.63,7.45+side*.17,.095,CREAM,side);
+      lettering(m,s.id==='centre'?'CENTRE':'VERGERS',5,5.42,side*6.17,.08,CREAM,side);
+    }
+    return m;
   }
 
   function mill(m) {
@@ -401,7 +441,12 @@
       const {map}=state, {bounds}=map;
       const base=new Mesh(), roads=new Mesh();
       const cx=(bounds.minX+bounds.maxX)/2, cy=(bounds.minY+bounds.maxY)/2;
-      groundQuad(base,cx,cy-600,cx,cy+600,1400,-.045,ruralBiome.grass);
+      const mapWidth=bounds.maxX-bounds.minX, mapHeight=bounds.maxY-bounds.minY;
+      const horizonMargin=300;
+      groundQuad(base,cx,bounds.minY-horizonMargin,cx,bounds.maxY+horizonMargin,
+        mapWidth+2*horizonMargin,-.045,ruralBiome.grass);
+      camera.far=Math.hypot(mapWidth,mapHeight)+2*horizonMargin;
+      camera.updateProjectionMatrix();
       groundQuad(base,bounds.minX-140,bounds.minY-66,bounds.minX-140,bounds.maxY+66,
         Math.max(1,2*(map.townEdge-bounds.minX+140)),-.025,cityBiome.grass);
       const fieldTones=['#b7c878','#cabc86','#99b780','#bec98b','#cdbc78'];
@@ -425,6 +470,9 @@
         const angle=i*Math.PI/2;
         const edge=i%2 ? bounds.maxX-cx : bounds.maxY-cy;
         const horizon=place(mountains,cx+Math.sin(angle)*edge,-6,cy+Math.cos(angle)*edge,angle);
+        // The shared panorama spans about 800 m across in its own frame.
+        horizon.scale.x=Math.max(1,((i%2 ? mapHeight : mapWidth)+2*horizonMargin)/800);
+        horizon.updateMatrix();
         horizon.castShadow=horizon.receiveShadow=false;
         horizon.material=lighting.backdropMaterial;
         horizon.renderOrder=-100;
@@ -455,7 +503,8 @@
         const dx=r.b.x-r.a.x,dy=r.b.y-r.a.y,len=Math.hypot(dx,dy);
         for(let d=16, side=1;d<len-11;d+=25,side=-side) {
           const right=side*(r.width/2+1.72),x=r.a.x+(d*dx-dy*right)/len,y=r.a.y+(d*dy+dx*right)/len;
-          if([...state.stops,...state.lights,...state.signs].some(s=>Math.hypot(x-s.x,y-s.y)<5)) continue;
+          if([...state.stops,...state.lights,...state.signs].some(s=>Math.hypot(x-s.x,y-s.y)<5)
+            || map.fuelStations.some(s=>Math.hypot(x-s.x,y-s.y)<11)) continue;
           addToTile(lamppost,x,y,Math.atan2(-dx*side,-dy*side));
         }
       }
@@ -466,6 +515,7 @@
         stopName(s);
       });
       for(const s of state.signs) addToTile(signModel(s.kind),s.x,s.y,-s.heading);
+      for(const s of map.fuelStations) addToTile(fillingStation(s),s.x,s.y,-s.heading);
       for(const [key,tile] of tiles) place(asset('tile'+key,()=>tile.model),tile.x,0,tile.z);
       previousTime=null;
       initialized=true;
@@ -602,6 +652,18 @@
     }
     ctx.closePath(); ctx.fillStyle=color; ctx.fill();
   }
+  function fuelPin(ctx,x,y,radius) {
+    ctx.save(); ctx.translate(x,y); ctx.scale(radius,radius);
+    dot(ctx,0,0,1,INK); dot(ctx,0,0,.86,'#ffd16c');
+    ctx.lineWidth=.13; ctx.lineJoin='round'; ctx.lineCap='round'; ctx.strokeStyle=INK;
+    ctx.beginPath();
+    ctx.moveTo(.13,-.06); ctx.lineTo(.33,-.06); ctx.lineTo(.33,.27);
+    ctx.quadraticCurveTo(.5,.45,.52,.2); ctx.lineTo(.52,-.17); ctx.lineTo(.34,-.38);
+    ctx.stroke();
+    rect(ctx,-.48,-.51,.64,.96,INK); rect(ctx,-.34,-.35,.36,.28,'#ffd16c');
+    rect(ctx,-.56,.39,.8,.13,INK);
+    ctx.restore();
+  }
   function vehicleBody(ctx,w,h,body,bus=false) {
     rect(ctx,-w/2,-h/2,w,h,body);
     rect(ctx,-w*.41,-h*.42,w*.82,h*.18,'#4e7282');
@@ -678,6 +740,15 @@
         cachedMap=state.map;
       }
       for(const [color,path] of roadPaths) { ctx.fillStyle=color; ctx.fill(path); }
+      for(const s of state.map.fuelStations) {
+        ctx.save(); ctx.translate(s.x,s.y); ctx.rotate(s.heading);
+        rect(ctx,-1.75,-8.1,14,16.2,'#979690');
+        for(const z of [-5.6,5.6]) {
+          rect(ctx,-1.25,z-.075,2.8,.15,CREAM);
+          rect(ctx,1.48,z>0?z-1.3:z,.15,1.3,CREAM);
+        }
+        ctx.restore();
+      }
       const light=serviceLight(state.time);
       const dir=light.direction, rayX=-dir.x/dir.y, rayY=dir.z/dir.y;
       const viewRange=Math.hypot(w,h)/px;
@@ -714,6 +785,9 @@
         shadow(stop.x+1.9*Math.cos(stop.heading),stop.y+1.9*Math.sin(stop.heading),stop.heading,2.2,5,2.9);
         for(const p of stop.waiting) shadow(p.x,p.y,0,.45,.35,1.7);
       }
+      for(const s of state.map.fuelStations) {
+        shadow(s.x+5*Math.cos(s.heading),s.y+5*Math.sin(s.heading),s.heading,7.55,12.35,5.6);
+      }
       for(const p of state.people) shadow(p.x,p.y,0,.45,.35,1.7);
       shadow(bodyX,bodyY,bodyHeading,2.7,9.2,roofHeight+rig.baseY+motion.heave);
       ctx.globalAlpha=1;
@@ -749,6 +823,15 @@
             if(shopfront) for(let i=0;i<9;i++) rect(ctx,-half+i,-3.9,1,1.12,i%2?CREAM:'#b95746');
           }
         }
+        ctx.restore();
+      }
+      for(const s of state.map.fuelStations) {
+        ctx.save(); ctx.translate(s.x,s.y); ctx.rotate(s.heading);
+        const urban=s.id==='centre';
+        rect(ctx,7.6,-4.7,4.6,9.4,urban?'#397a77':'#b07559');
+        rect(ctx,1.22,-6.18,7.55,12.35,GOLD);
+        rect(ctx,1.48,-5.92,7.03,11.83,urban?'#378b88':'#bd694b');
+        rect(ctx,1.65,7.26,2.7,.38,CREAM);
         ctx.restore();
       }
       for(const stop of state.stops) {
@@ -821,6 +904,10 @@
         dot(ctx,x,y-9,8,INK); ctx.fillStyle=CREAM; ctx.textAlign='center'; ctx.textBaseline='middle';
         ctx.font='bold 10px sans-serif'; ctx.fillText(String(i+1),x,y-8.5);
       }
+      for(const station of state.map.fuelStations) {
+        const dx=station.x-b.x,dy=station.y-b.y;
+        fuelPin(ctx,w/2+(dx*ct+dy*st)*px,h*.68+(-dx*st+dy*ct)*px-11,8);
+      }
     }
     return {draw,dispose(){},mode:'2d'};
   }
@@ -848,6 +935,9 @@
       if(requested.has(stop.id)) dot(ctx,x,y,r+2.2,GOLD);
       dot(ctx,x,y,r,INK); dot(ctx,x,y,r-.9,requested.has(stop.id)?GOLD:'#9fddd0');
       ctx.fillStyle=INK; ctx.fillText(String(i+1),x,y+.5);
+    }
+    for(const station of map.fuelStations) {
+      fuelPin(ctx,ox+station.x*scale,oy+station.y*scale,full?10:5.8);
     }
     const x=ox+bus.x*scale,y=oy+bus.y*scale, r=full?7:4.5;
     ctx.save(); ctx.translate(x,y); ctx.rotate(bus.heading);

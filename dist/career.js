@@ -11,6 +11,8 @@
   const balanceDial = mountCounter($('balance'));
   const onboardDial = mountCounter($('onboard'));
   const speedDial = mountCounter($('bus-speed'));
+  const fuelDial = mountCounter($('fuel-value'), 100);
+  const reserveLevel = 25;
   const pacer = window.BusSettings.createFramePacer();
   const audio = window.BusAudio.create();
   const keys = new Map(Object.entries({
@@ -47,20 +49,41 @@
   }
 
   function refreshInstruments(animate = true) {
-    const {stops, nearbyStop, passengers, bus, doorsOpen, serviceComplete, district} = sim.state;
+    const {stops, nearbyStop, passengers, bus, doorsOpen, serviceComplete, district, map, fuel, nearbyFuelStation, refueling} = sim.state;
     const requested = passengers.length && stops.find(stop => stop.id === passengers[0].destination);
+    const reserve = fuel <= reserveLevel;
     const closest = nearbyStop || stops.reduce((best, stop) => stopDistance(best) < stopDistance(stop) ? best : stop);
-    const target = requested || closest;
-    write('stop-label', requested ? 'Arrêt demandé' : 'Arrêt le plus proche');
-    write('stop-number', String(stops.indexOf(target) + 1).padStart(2, '0'));
+    const station = nearbyFuelStation || (reserve && map.fuelStations.reduce((best, pump) => stopDistance(best) < stopDistance(pump) ? best : pump));
+    const target = station || requested || closest;
+    const stopLabel = requested ? 'Arrêt demandé' : 'Arrêt le plus proche';
+    write('stop-label', station ? (nearbyFuelStation ? 'Station-service' : 'Réserve · Station la plus proche') : stopLabel);
+    $('stop-number').hidden = !!station;
+    $('station-marker').toggleAttribute('hidden', !station);
+    if (!station) write('stop-number', String(stops.indexOf(target) + 1).padStart(2, '0'));
     write('stop-name', target.name);
     write('stop-distance', Math.round(stopDistance(target)) + ' m');
     write('district', district);
     balanceDial(driver.balance, animate);
     onboardDial(passengers.length, animate);
     speedDial(Math.abs(Math.round(bus.speed * 3.6)), animate);
+    const level = Math.ceil(fuel);
+    fuelDial(level, animate);
+    const meter = $('fuel-meter');
+    if (meter.getAttribute('aria-valuenow') !== String(level)) {
+      meter.setAttribute('aria-valuenow', level);
+      meter.setAttribute('aria-valuetext', level + ' %');
+      meter.style.setProperty('--fuel-level', level + '%');
+    }
+    const gauge = $('fuel-instrument');
+    if (reserve && !gauge.classList.contains('on-reserve') && !nearbyFuelStation && !sim.state.outOfFuel) {
+      notices.push({type:'hint', title:'Réserve d’essence', message:station.name + ' · ' + Math.round(stopDistance(station)) + ' m'});
+    }
+    gauge.classList.toggle('on-reserve', reserve);
     let platformStatus = '';
-    if (nearbyStop) {
+    if (nearbyFuelStation) {
+      const instruction = refueling ? 'Plein en cours' : level === 100 ? 'Réservoir plein' : 'Immobilise le bus à la pompe';
+      platformStatus = nearbyFuelStation.name + ' · ' + instruction;
+    } else if (nearbyStop) {
       let instruction = 'Immobilise le bus pour ouvrir les portes';
       if (doorsOpen) instruction = 'Portes ouvertes · Échanges en cours';
       else if (serviceComplete) instruction = 'Tu peux repartir';
@@ -86,6 +109,8 @@
       notices.push({type:'cone', title:'Oups !', message:event.message});
     } else if (event.type === 'doors' && sim.state.doorsOpen) {
       airBrake();
+    } else if (event.type === 'refueled') {
+      notices.push({type:'repair', title:'Plein terminé', message:'Tu peux repartir'});
     }
     lastHud = 0;
   }
@@ -111,6 +136,14 @@
     if (input.brake && sim.state.bus.speed > 3) brakingToStop = true;
     if (!input.brake) brakingToStop = false;
     if (lastFrame !== undefined) sim.update((now - lastFrame) / 1000, input);
+    if (sim.state.outOfFuel) {
+      notices.clear();
+      refreshInstruments(false);
+      renderer.draw(sim.state);
+      renderer.drawMap($('mini-map'), sim.state);
+      openMenu(false);
+      return;
+    }
     if (brakingToStop && sim.state.bus.speed < .8) {
       airBrake();
       brakingToStop = false;
@@ -170,6 +203,15 @@
       li.append(number, stop.name + (count ? ' · ' + count + ' à déposer' : ''));
       list.append(li);
     });
+    const stations = $('fuel-station-list');
+    stations.replaceChildren();
+    for (const station of sim.state.map.fuelStations) {
+      const item = document.createElement('li');
+      const distance = document.createElement('span');
+      distance.textContent = Math.round(stopDistance(station)) + ' m';
+      item.append(station.name + ' ', distance);
+      stations.append(item);
+    }
   }
 
   function openMenu(showMap) {
@@ -179,21 +221,31 @@
     brakingToStop = false;
     audio.setDriving(false);
     stage.classList.add('is-paused');
+    const gameOver = sim.state.outOfFuel;
+    showMap = showMap && !gameOver;
     $('map-panel').hidden = !showMap;
-    $('pause-details').hidden = showMap;
-    $('menu-map').hidden = showMap;
+    $('pause-details').hidden = showMap || gameOver;
+    $('menu-map').hidden = showMap || gameOver;
+    $('resume-service').hidden = gameOver;
+    $('restart-service').hidden = !gameOver;
+    $('service-result').hidden = !gameOver;
     menu.classList.toggle('show-map', showMap);
-    write('menu-title', showMap ? 'Plan du réseau' : 'Service en pause');
-    write('service-takings', 'Recettes de ce service · ' + format.format(sim.state.earnings) + ' €$');
+    write('menu-title', gameOver ? 'Panne sèche' : showMap ? 'Plan du réseau' : 'Service en pause');
+    const earnings = format.format(sim.state.earnings) + ' €$';
+    if (gameOver) {
+      write('result-distance', format.format(Math.round(sim.state.distance)) + ' m');
+      write('result-earnings', earnings);
+    } else write('service-takings', 'Recettes de ce service · ' + earnings);
     if (!menu.open) menu.showModal();
     if (showMap) {
       drawStopList();
       renderer.drawMap($('network-map'), sim.state);
     }
-    $('resume-service').focus();
+    $(gameOver ? 'restart-service' : 'resume-service').focus();
   }
 
   function resume() {
+    if (!sim || sim.state.outOfFuel) return;
     menu.close();
     stage.classList.remove('is-paused');
     run();
@@ -220,6 +272,11 @@
   $('open-map').addEventListener('click', () => openMenu(true));
   $('menu-map').addEventListener('click', () => openMenu(true));
   $('resume-service').addEventListener('click', resume);
+  $('restart-service').addEventListener('click', () => {
+    menu.close();
+    stage.classList.remove('is-paused');
+    startService(driver);
+  });
   $('change-profile').addEventListener('click', endService);
   $('exit-career').addEventListener('click', () => {
     endService();

@@ -53,7 +53,7 @@
   border-radius:12px;
   box-shadow:0 3px 12px #18242f33;
 }
-#stop-number {
+.route-marker {
   flex:none;
   display:grid;
   place-content:center;
@@ -64,6 +64,8 @@
   border-radius:7px;
   font:1.1rem/1 var(--display);
 }
+.route-marker:has(#station-marker:not([hidden])) { background:var(--yellow); }
+#station-marker { width:22px; height:22px; }
 .instrument-label { display:block; color:#cbc0ce; font-size:.67rem; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
 #stop-name { display:block; font:700 clamp(.9rem,1.6vw,1.18rem)/1.15 var(--sans); }
 #stop-distance { margin-left:3px; font-size:.8rem; color:#e1d2c0; white-space:nowrap; font-variant-numeric:tabular-nums; }
@@ -113,6 +115,12 @@
 .instrument>.icon { color:var(--lilac); width:25px; height:25px; }
 .instrument strong { display:block; font:clamp(17px,2vw,26px)/1.1 var(--display); }
 .instrument.fare strong,.instrument.fare>.icon { color:var(--green); }
+.fuel { --gauge-color:var(--green); }
+.fuel.on-reserve { --gauge-color:var(--yellow); }
+.fuel.on-reserve>.icon,.fuel.on-reserve strong { color:var(--gauge-color); }
+.fuel .reading { gap:3px; flex-wrap:nowrap; }
+.fuel-track { display:block; overflow:hidden; height:4px; min-width:42px; margin-top:3px; border-radius:3px; background:#51485c; }
+.fuel-track i { display:block; height:100%; width:var(--fuel-level,100%); background:var(--gauge-color); }
 .district-indicator { display:flex; align-items:center; gap:8px; margin-left:auto; font-weight:700; font-size:.9rem; }
 .district-indicator i { width:9px; height:9px; border-radius:50%; background:var(--green); box-shadow:0 0 0 3px #83d8bd22; }
 .service-help { display:flex; justify-content:center; gap:clamp(10px,2vw,36px); padding:7px 10px; background:#201b29; color:#d7cddb; font-size:.74rem; }
@@ -137,6 +145,10 @@
 #service-menu { width:min(520px,calc(100% - 28px)); max-height:90dvh; color:var(--cream); }
 #service-menu.show-map { width:min(680px,calc(100% - 22px)); }
 .service-dialog-body { padding:clamp(16px,3vw,27px); }
+.show-map .service-dialog-body { display:flex; flex-direction:column; max-height:calc(90dvh - 2px); overflow:auto; }
+.show-map #map-panel { display:contents; }
+.show-map .service-dialog-body>*, .show-map #map-panel>* { flex-shrink:0; }
+.show-map #network-map { flex-shrink:1; min-height:115px; }
 .service-dialog-body h2 { margin:0 0 12px; font:clamp(1.3rem,3.3vw,1.9rem)/1.1 var(--display); }
 #pause-details p { color:#d1c5d5; }
 #service-settings { margin:14px 0 8px; }
@@ -147,9 +159,23 @@
 #stop-list li { display:flex; align-items:center; gap:7px; font-size:.82rem; }
 #stop-list .stop-index { display:grid; place-items:center; width:21px; height:21px; flex:none; border:1px solid #92889a; border-radius:50%; font-size:.7rem; font-weight:700; }
 #stop-list .requested .stop-index { color:#302536; border-color:var(--yellow); background:var(--yellow); }
+.fuel-map-label { display:flex; align-items:center; gap:7px; margin:15px 0 5px; font-size:.9rem; }
+.fuel-map-label .icon { width:22px; height:22px; padding:2px; border-radius:4px; background:var(--yellow); color:#362c22; }
+#fuel-station-list { display:grid; grid-template-columns:1fr 1fr; gap:4px 12px; padding:0; margin:0; list-style:none; font-size:.82rem; }
+#fuel-station-list li { display:flex; align-items:baseline; flex-wrap:wrap; gap:0 6px; }
+#fuel-station-list li span { white-space:nowrap; color:var(--muted); }
+.fuel-map-help { margin:5px 0; color:var(--muted); font-size:.8rem; }
+#service-result dl { margin:16px 0; padding-block:8px; border-block:1px solid var(--line); }
+#service-result dl div { display:flex; align-items:baseline; justify-content:space-between; gap:10px; padding:5px 0; }
+#service-result dd { margin:0; font-family:var(--display); color:var(--green); }
 .service-menu-actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:18px; }
 .show-map #resume-service { grid-column:1 / -1; }
+#restart-service { grid-column:1 / -1; }
 .service-menu-actions button { min-height:38px; padding:10px 13px; font-size:.86rem; }
+@media (min-width:601px) {
+  .show-map .service-menu-actions { grid-template-columns:repeat(3,minmax(0,1fr)); }
+  .show-map #resume-service { grid-column:auto; }
+}
 @media (pointer:coarse), (max-width:700px) {
   .career-touch { display:flex; }
   .service-help { display:none; }
@@ -167,7 +193,7 @@
   .network-button { width:94px; }
   .network-button .map-label-end { display:none; }
   .stop-display { max-width:calc(100% - 120px); gap:6px; padding:6px; }
-  #stop-number { min-width:29px; height:33px; font-size:.9rem; }
+  .route-marker { min-width:29px; height:33px; font-size:.9rem; }
   #stop-distance { font-size:.7rem; }
   .instrument-label { font-size:.55rem; }
   .instruments { justify-content:space-around; padding:9px 8px; gap:8px; }
@@ -175,6 +201,12 @@
   .instrument>.icon { width:19px; height:19px; }
   .district-indicator { display:none; }
   #stop-list { gap:4px; }
+}
+@media (max-width:480px) {
+  .instruments { gap:5px; }
+  .instruments .instrument>.icon { display:none; }
+  #fuel-station-list { grid-template-columns:1fr; }
+  #fuel-station-list li { justify-content:space-between; }
 }
 @media (max-height:450px) and (orientation:landscape) {
   .career-app { --header-height:36px; }

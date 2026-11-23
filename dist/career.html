@@ -7,7 +7,7 @@
   <title>Carrière · Bus Station 3</title>
   <link rel="icon" href="assets/bus-mark.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css?v=20">
-  <link rel="stylesheet" href="career.css?v=4">
+  <link rel="stylesheet" href="career.css?v=5">
   <link rel="stylesheet" href="career-profiles.css?v=1">
   <script defer src="assets/vendor/number-flow-0.6.2.js"></script>
   <script defer src="mesh.js?v=4"></script>
@@ -30,10 +30,10 @@
   <script defer src="career-profiles.js?v=1"></script>
   <script defer src="career-physics.js?v=1"></script>
   <script defer src="career-motion.js?v=1"></script>
-  <script defer src="career-sim.js?v=6"></script>
+  <script defer src="career-sim.js?v=7"></script>
   <script defer src="career-roads.js?v=1"></script>
-  <script defer src="career-render.js?v=6"></script>
-  <script defer src="career.js?v=5"></script>
+  <script defer src="career-render.js?v=7"></script>
+  <script defer src="career.js?v=6"></script>
 </head>
 <body class="career-app">
   <svg class="career-icons" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -43,6 +43,7 @@
     <symbol id="ic-ticket" viewBox="0 0 24 24"><path d="M3 5h18v5a2 2 0 0 0 0 4v5H3v-5a2 2 0 0 0 0-4zm12 3v1m0 3v1m0 3v1"/></symbol>
     <symbol id="ic-people" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6m2 3a5 5 0 0 1 3 4v2"/></symbol>
     <symbol id="ic-speed" viewBox="0 0 24 24"><path d="M4 18a9 9 0 1 1 16 0M12 5v2m6 1-5 6"/><circle cx="12" cy="15" r="1.5"/></symbol>
+    <symbol id="ic-fuel" viewBox="0 0 24 24"><path d="M3 21h12M5 21V4h8v17M5 11h8m0 2h2a2 2 0 0 1 2 2v2a2 2 0 0 0 4 0V9l-4-4m1 1-1 2 2 2h2"/></symbol>
     <symbol id="ic-horn" viewBox="0 0 24 24"><path d="M4 11h6l9-5v13l-9-4H4zm3 4 1.5 5h3L10 15m12-6v5"/></symbol>
   </svg>
   <header class="career-header">
@@ -61,9 +62,9 @@
     <noscript>Active JavaScript pour prendre ton service.</noscript>
     <section id="service" aria-label="Service en carrière" hidden>
       <div id="city-stage">
-        <canvas id="city-view" tabindex="-1" aria-label="Conduite du bus. Braque avec les flèches ou en glissant sur la route. Immobilise le bus à un arrêt pour la montée et la descente automatiques des passagers. M ouvre le plan."></canvas>
+        <canvas id="city-view" tabindex="-1" aria-label="Conduite du bus. Braque avec les flèches ou en glissant sur la route. Immobilise le bus à un arrêt pour les passagers ou à une pompe pour faire le plein. M ouvre le plan."></canvas>
         <div class="stop-display">
-          <span id="stop-number"></span>
+          <span class="route-marker"><span id="stop-number"></span><svg id="station-marker" class="icon" aria-hidden="true" hidden><use href="#ic-fuel"/></svg></span>
           <div><span class="instrument-label" id="stop-label"></span><strong id="stop-name"></strong></div>
           <span id="stop-distance"></span>
         </div>
@@ -79,6 +80,15 @@
         <div class="instrument fare"><svg class="icon" aria-hidden="true"><use href="#ic-ticket"/></svg><div><span class="instrument-label">Caisse</span><div class="reading"><strong><number-flow id="balance">0</number-flow></strong><small>€$</small></div></div></div>
         <div class="instrument"><svg class="icon" aria-hidden="true"><use href="#ic-people"/></svg><div><span class="instrument-label">À bord</span><div class="reading"><strong><number-flow id="onboard">0</number-flow></strong></div></div></div>
         <div class="instrument"><svg class="icon" aria-hidden="true"><use href="#ic-speed"/></svg><div><span class="instrument-label">Vitesse</span><div class="reading"><strong><number-flow id="bus-speed">0</number-flow></strong><small>km/h</small></div></div></div>
+        <div class="instrument fuel" id="fuel-instrument">
+          <svg class="icon" aria-hidden="true"><use href="#ic-fuel"/></svg>
+          <div><span class="instrument-label" id="fuel-label">Essence</span>
+            <div id="fuel-meter" role="meter" aria-labelledby="fuel-label" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100" aria-valuetext="100 %">
+              <div class="reading" aria-hidden="true"><strong><number-flow id="fuel-value">100</number-flow></strong><small>%</small></div>
+              <span class="fuel-track" aria-hidden="true"><i></i></span>
+            </div>
+          </div>
+        </div>
         <button id="horn" class="career-tool" type="button" aria-label="Klaxonner" title="Klaxonner (H)"><svg class="icon" aria-hidden="true"><use href="#ic-horn"/></svg></button>
         <div class="district-indicator"><i aria-hidden="true"></i><span id="district"></span></div>
       </div>
@@ -98,11 +108,19 @@
         <a class="audio-credits" href="assets/licenses/cinematic-audio.txt" target="_blank" rel="noopener">Crédits sonores</a>
       </div>
       <div id="map-panel" hidden>
-        <canvas id="network-map" aria-label="Plan des routes, des arrêts et de la position du bus"></canvas>
+        <canvas id="network-map" aria-label="Plan des routes, des arrêts, des stations-service et de la position du bus"></canvas>
         <ol id="stop-list" aria-label="Arrêts du réseau"></ol>
+        <h3 class="fuel-map-label"><svg class="icon" aria-hidden="true"><use href="#ic-fuel"/></svg> Stations-service</h3>
+        <ul id="fuel-station-list" aria-label="Stations-service"></ul>
+        <p class="fuel-map-help">Arrête le bus à une pompe pour faire le plein gratuitement.</p>
+      </div>
+      <div id="service-result" hidden>
+        <p>Le réservoir est vide. Ton service est terminé.</p>
+        <dl><div><dt>Distance parcourue</dt><dd id="result-distance"></dd></div><div><dt>Recettes du service</dt><dd id="result-earnings"></dd></div></dl>
       </div>
       <div class="service-menu-actions">
         <button class="primary" id="resume-service" type="button">Reprendre le volant</button>
+        <button class="primary" id="restart-service" type="button" hidden>Nouveau service</button>
         <button class="secondary" id="menu-map" type="button">Voir le plan</button>
         <button class="secondary" id="change-profile" type="button">Changer de profil</button>
         <button class="secondary" id="exit-career" type="button">Quitter la carrière</button>

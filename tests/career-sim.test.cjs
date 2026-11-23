@@ -126,17 +126,24 @@ test('a full bus automatically lets a rider off and boards only as many as there
 
 test('the driver can turn onto a second road that leads out into the countryside', () => {
   const sim = create();
-  // Isolate steering from incidental traffic along the test itinerary.
+  const {map, bus} = sim.state;
+  // Approach the central junction at the same speed regardless of block length.
   sim.state.cars = [];
-  driveUntil(sim, {accelerate:true}, bus => bus.speed >= 14);
+  sim.state.cones = [];
+  driveUntil(sim, {accelerate:true}, bus => bus.y <= 65);
+  driveUntil(sim, {brake:true}, bus => bus.speed <= 14);
   driveUntil(sim, {}, bus => bus.y <= 18);
   driveUntil(sim, {right:true}, bus => bus.heading >= 1.55);
-  driveUntil(sim, {accelerate:true}, bus => bus.x > 108);
-  assert.ok(sim.state.bus.x > 100);
+  driveUntil(sim, {accelerate:true}, bus => bus.x > map.townEdge + 8);
+  assert.ok(bus.x > map.byId.E.x);
   assert.equal(sim.state.district, 'Campagne');
-  assert.ok(sim.state.distance > 120);
+  assert.ok(sim.state.distance > 300);
 
-  const {roads, nodes} = sim.state.map;
+  const {roads, nodes} = map;
+  const xs = nodes.map(node => node.x), ys = nodes.map(node => node.y);
+  // The original network of junctions measured 430 m east–west and 283 m north–south.
+  assert.equal(Math.max(...xs) - Math.min(...xs), 2 * 430);
+  assert.equal(Math.max(...ys) - Math.min(...ys), 2 * 283);
   const connected = new Set([nodes[0]]);
   for (const _ of nodes) {
     for (const {a, b} of roads) {
@@ -145,6 +152,100 @@ test('the driver can turn onto a second road that leads out into the countryside
   }
   assert.equal(connected.size, nodes.length);
   assert.ok(roads.length > nodes.length, 'the road network contains several independent cycles');
+});
+
+test('the tank starts full and fuel consumption follows the metres driven in either gear', () => {
+  const sim = create(), {state} = sim;
+  state.cones = [];
+  state.cars = [];
+  assert.equal(state.fuel, 100);
+  tick(sim, 6);
+  assert.equal(state.distance, 0);
+  assert.equal(state.fuel, 100);
+  tick(sim, 2, {accelerate:true});
+  const forwardDistance = state.distance, forwardFuel = state.fuel;
+  assert.ok(forwardDistance > 0 && forwardFuel < 100);
+  driveUntil(sim, {brake:true}, bus => bus.speed < -1);
+  const reverseStart = state.distance, reverseFuel = state.fuel;
+  tick(sim, 1, {brake:true});
+  assert.ok(state.distance > reverseStart && state.fuel < reverseFuel);
+  const fuelPerMetre = (100 - forwardFuel) / forwardDistance;
+  const reverseConsumption = (reverseFuel - state.fuel) / (state.distance - reverseStart);
+  assert.ok(Math.abs(reverseConsumption - fuelPerMetre) < 1e-7);
+});
+
+test('both fuel stations allow a complete refill after braking at the pump', () => {
+  const events = [];
+  const sim = create({onEvent:e => events.push(e.type)}), {state} = sim;
+  state.cones = [];
+  state.cars = [];
+  const stations = state.map.fuelStations;
+  assert.equal(stations.length, 2);
+  assert.equal(new Set(stations.map(s => s.id)).size, 2);
+  assert.ok(stations.some(s => s.x < state.map.townEdge) && stations.some(s => s.x > state.map.townEdge));
+
+  for (const station of stations) {
+    events.length = 0;
+    state.fuel = 43;
+    const dx = Math.sin(station.heading), dy = -Math.cos(station.heading);
+    Object.assign(state.bus, {x:station.x - 13*dx, y:station.y - 13*dy, heading:station.heading, speed:9, steer:0});
+    driveUntil(sim, {}, () => state.nearbyFuelStation?.id === station.id);
+    assert.ok(state.bus.speed > 5 && state.fuel < 43);
+    assert.equal(state.refueling, false, 'driving by the pump cannot fill the tank');
+    driveUntil(sim, {brake:true}, () => state.refueling);
+    const before = state.fuel;
+    tick(sim, .4, {brake:true});
+    assert.ok(state.fuel > before && state.fuel < 100);
+    assert.equal(state.bus.speed, 0);
+    tick(sim, 6);
+    assert.equal(state.fuel, 100);
+    assert.equal(state.refueling, false);
+    assert.equal(events.filter(type => type === 'refueled').length, 1);
+    driveUntil(sim, {accelerate:true}, () => !state.nearbyFuelStation);
+    assert.ok(state.bus.speed > 0 && state.fuel < 100);
+  }
+});
+
+test('the last drops must carry the bus into the pump area even if one frame would overshoot it', () => {
+  // Both buses approach from 4 m away, within one physics step of the 3.5 m pump radius.
+  for (const [remainingMetres, reachesPump] of [[.2,false],[.7,true]]) {
+    const events = [];
+    const sim = create({onEvent:e => events.push(e.type)}), {state} = sim;
+    const station = state.map.fuelStations[0];
+    state.cars = [];
+    state.cones = [];
+    state.fuel = 100 * remainingMetres / 4000;
+    Object.assign(state.bus, {x:station.x - 4*Math.sin(station.heading),
+      y:station.y + 4*Math.cos(station.heading), heading:station.heading, speed:25});
+    sim.update(1/30);
+    assert.ok(Math.abs(state.distance - remainingMetres) < 1e-7);
+    assert.equal(state.outOfFuel, !reachesPump);
+    assert.equal(state.refueling, reachesPump);
+    tick(sim, 6);
+    assert.equal(state.fuel, reachesPump ? 100 : 0);
+    assert.deepEqual(events, [reachesPump ? 'refueled' : 'fuel-empty']);
+  }
+});
+
+test('running dry on the road ends the service and a new service starts with a full tank', () => {
+  const events = [];
+  const sim = create({onEvent:e => events.push(e.type)}), {state} = sim;
+  state.cars = [];
+  state.cones = [];
+  state.fuel = .01;
+  driveUntil(sim, {accelerate:true}, () => state.outOfFuel);
+  assert.equal(state.fuel, 0);
+  assert.equal(state.bus.speed, 0);
+  assert.equal(state.refueling, false);
+  const stoppedAt = state.distance;
+  tick(sim, 3, {accelerate:true});
+  tick(sim, 3, {brake:true});
+  assert.equal(state.distance, stoppedAt);
+  assert.equal(state.fuel, 0);
+  assert.equal(events.filter(type => type === 'fuel-empty').length, 1);
+  const next = create();
+  assert.equal(next.state.fuel, 100);
+  assert.equal(next.state.outOfFuel, false);
 });
 
 test('a quick correction is gentle at cruising speed and the wheel centres on release', () => {
@@ -238,7 +339,7 @@ function collisionScenario({offset = 0, gap = 9, heading = 0, busSpeed = 19, car
   const {bus, cars} = sim.state, car = cars[0];
   sim.state.cars = [car];
   sim.state.cones = [];
-  car.location = 36;
+  car.location = car.route.controls[0].at - 57;
   const lane = car.route.points[0];
   Object.assign(car, {x:lane.x, y:lane.y-car.location, heading:0, speed:carSpeed, cruise, vx:0, vy:-carSpeed});
   Object.assign(bus, {x:car.x+offset, y:car.y+gap, heading, speed:busSpeed});

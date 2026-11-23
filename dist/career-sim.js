@@ -5,6 +5,9 @@
   const capacity = 24;
   const topSpeed = 90 / 3.6;
   const coneLimit = 6;
+  const metresPerFuelPercent = 40;
+  const refillPercentPerSecond = 20;
+  const pumpRadius = 3.5;
   const countryRoadWidth = 13, countryVergeWidth = 4;
   const countryRoadside = countryRoadWidth / 2 + countryVergeWidth + .65;
   const coats = ['#ef795e', '#43ac9d', '#f2bc45', '#9475cc', '#507dd1', '#e796bd'];
@@ -28,11 +31,11 @@
 
   function makeMap() {
     const locations = {
-      NW: [-100, -110], N: [0, -110], NE: [95, -110],
-      W: [-100, 0], C: [0, 0], E: [95, 0],
-      SW: [-100, 115], S: [0, 115], SE: [95, 115],
-      mill: [205, -136], hill: [330, -82], orchard: [326, 58],
-      farm: [214, 147], fork: [207, 16]
+      NW: [-200, -220], N: [0, -220], NE: [190, -220],
+      W: [-200, 0], C: [0, 0], E: [190, 0],
+      SW: [-200, 230], S: [0, 230], SE: [190, 230],
+      mill: [410, -272], hill: [660, -164], orchard: [652, 116],
+      farm: [428, 294], fork: [414, 32]
     };
     const nodes = Object.entries(locations).map(([id, [x, y]]) => ({id, x, y}));
     const byId = Object.fromEntries(nodes.map(node => [node.id, node]));
@@ -50,7 +53,12 @@
     for (const [a, b] of [['NE', 'mill'], ['mill', 'hill'], ['hill', 'orchard'],
       ['orchard', 'farm'], ['farm', 'SE'], ['E', 'fork'], ['fork', 'mill'],
       ['fork', 'orchard'], ['fork', 'farm']]) street(a, b, 'country');
-    return {nodes, roads, byId, townEdge: 100, bounds: {minX: -131, minY: -165, maxX: 360, maxY: 177}};
+    const map = {nodes, roads, byId, townEdge: 200, bounds: {minX: -262, minY: -330, maxX: 720, maxY: 354}};
+    map.fuelStations = [
+      {id:'centre', name:'Relais du Centre', ...roadside(map, 'C', 'E', .47, 9.15)},
+      {id:'vergers', name:'Relais des Vergers', ...roadside(map, 'fork', 'orchard', .55, 8.35)}
+    ];
+    return map;
   }
 
   // Sidewalk furniture faces traffic coming from 'from'. x and y are metres.
@@ -297,7 +305,7 @@
 
   function drive(state, dt, input, brakeHeldAtStop) {
     const bus = state.bus;
-    if (state.doorsOpen) return;
+    if (state.doorsOpen || state.refueling) return;
     let acceleration = 0;
     if (input.brake) acceleration = bus.speed > .15 ? -13.5 : -3.5;
     else if (input.accelerate) acceleration = bus.speed < -.15 ? 9 : 6.6;
@@ -317,7 +325,16 @@
       bus.y += (edge.y - bus.y) * edge.over / edge.lateral;
       bus.speed *= Math.exp(-3.8 * dt);
     }
-    state.distance += distance(bus, previous);
+    const travelled = distance(bus, previous);
+    const range = state.fuel * metresPerFuelPercent;
+    if (travelled > range) {
+      // Stop at the last reachable point, even if this step would cross a pump.
+      const fraction = range / travelled;
+      bus.x = previous.x + (bus.x - previous.x) * fraction;
+      bus.y = previous.y + (bus.y - previous.y) * fraction;
+    }
+    state.distance += Math.min(travelled, range);
+    state.fuel = travelled >= range ? 0 : state.fuel - travelled / metresPerFuelPercent;
   }
 
   function coneSites(map, stops, random) {
@@ -330,6 +347,7 @@
           const lateral = side * road.width * (.32 + .07 * random());
           const point = offset(road.a, axis, along, lateral);
           if (stops.some(stop => distance(point, stop) < 21)) continue;
+          if (map.fuelStations.some(station => distance(point, station) < 15)) continue;
           if (map.nodes.some(node => distance(point, node) < 18)) continue;
           sites.push({...point, road, lateral, heading:Math.atan2(axis.x, -axis.y)});
         }
@@ -384,10 +402,12 @@
 
   function create({onEvent = () => {}, random = Math.random} = {}) {
     const map = makeMap(), stops = makeStops(map);
-    const bus = {x:5.2, y:62, heading:0, speed:0, steer:0, vx:0, vy:0, yawRate:0,
+    const depot = stops[0], spawn = offset(depot, forwardOf(depot.heading), -2, -4);
+    const bus = {...spawn, heading:depot.heading, speed:0, steer:0, vx:0, vy:0, yawRate:0,
       motion:window.CareerMotion.create()};
     const state = {map, stops, ...makeSignals(map), bus,
       time: 0, distance: 0, earnings: 0, passengers: [], people: [], doorsOpen: false, serviceComplete: false,
+      fuel:100, nearbyFuelStation:null, refueling:false, outOfFuel:false,
       nearbyStop: stops[0], district: 'Centre-ville', collisions: 0, cones: []};
     state.cars = makeTraffic(state);
     const sites = coneSites(map, stops, random);
@@ -396,7 +416,7 @@
       if (site) state.cones.push({id, ...site, hit:null});
     }
     updateLights(state);
-    let serial = 0, brakeHeldAtStop = false;
+    let serial = 0, brakeHeldAtStop = false, filledHere = false;
     function queuePassenger(stop, index) {
       const number = serial++;
       const choices = stops.filter(item => item !== stop);
@@ -433,12 +453,46 @@
       return true;
     }
 
+    function readyToPark(input, previousSpeed) {
+      const pullingAway = input.accelerate && !input.brake && previousSpeed >= 0;
+      return Math.abs(bus.speed) <= .4 && !pullingAway;
+    }
+
+    function updateFuelStop(dt, input, previousSpeed) {
+      const station = map.fuelStations.find(pump => distance(bus, pump) <= pumpRadius) || null;
+      if (state.nearbyFuelStation !== station) {
+        state.nearbyFuelStation = station;
+        filledHere = false;
+        state.refueling = false;
+      }
+      if (!station) {
+        if (state.fuel === 0) {
+          bus.speed = bus.vx = bus.vy = bus.yawRate = 0;
+          state.outOfFuel = true;
+          onEvent({type:'fuel-empty'});
+        }
+        return;
+      }
+      if (state.fuel >= 100) return;
+      if (!state.refueling) {
+        if (state.fuel > 0 && (filledHere || !readyToPark(input, previousSpeed))) return;
+        bus.speed = 0;
+        state.refueling = true;
+      }
+      state.fuel = Math.min(100, state.fuel + refillPercentPerSecond * dt);
+      if (state.fuel === 100) {
+        state.refueling = false;
+        filledHere = true;
+        brakeHeldAtStop = !!input.brake;
+        onEvent({type:'refueled', stationName:station.name});
+      }
+    }
+
     function updateService(dt, input, previousSpeed) {
       const stop = state.nearbyStop;
       if (!stop || state.serviceComplete) return;
       if (!state.doorsOpen) {
-        const pullingAway = input.accelerate && !input.brake && previousSpeed >= 0;
-        if (Math.abs(bus.speed) > .4 || pullingAway) return;
+        if (!readyToPark(input, previousSpeed)) return;
         if (!startTransfer(stop)) {
           state.serviceComplete = true;
           return;
@@ -479,6 +533,8 @@
       bus.vx = (bus.x - oldX)/dt;
       bus.vy = (bus.y - oldY)/dt;
       bus.yawRate = (bus.heading - oldHeading)/dt;
+      updateFuelStop(dt, input, oldSpeed);
+      if (state.outOfFuel) return;
       for (const stop of stops) {
         if (state.time >= stop.nextArrival && stop.waiting.length < 4 && distance(state.bus, stop) > 35) {
           queuePassenger(stop, stop.waiting.length);
@@ -522,7 +578,7 @@
       // Keep physics stable across refresh rates and discard time spent in inactive tabs.
       const activeTime = Math.min(seconds, .25);
       const count = Math.ceil(activeTime * 30);
-      for (let i = 0; i < count; i++) step(activeTime / count, input);
+      for (let i = 0; i < count && !state.outOfFuel; i++) step(activeTime / count, input);
     }
     return {state, update};
   }
