@@ -30,13 +30,7 @@
     });
     skyline[1].rotation.y=Math.PI*.5;
     skyline[2].rotation.y=Math.PI;
-    const streak=asset('boostTrail',()=>{
-      const model=new Mesh();
-      for(const side of [-1,1]) for(const [x,length] of [[.94,1.5],[1.09,.88]]) {
-        model.tri([side*(x-.038),0,0],[side*(x+.038),0,0],[side*x,0,-length],'#ffcc66');
-      }
-      return model;
-    });
+    const streak=asset('boostTrail',window.BusBoost.trail);
 
     // At a low sun angle the physical shadow can fall outside the car's
     // lane. A feathered marker locates the wheels' landing point during jumps.
@@ -229,8 +223,9 @@
         if(!props.has(o.type)||o.z < -8||o.z>FAR) continue;
         const z=d+o.z, x=roadX(z)+o.lane*LANE;
         const pickup=o.type==='boost'||o.type==='repair'||o.type==='rocket';
-        const yaw=Math.atan(roadSlope(z))+(pickup?.29*Math.sin(t*2.5+z*.17):0);
-        place(item(o.type),x,pickup?Math.sin(t*3+z*.06)*.12:0,z,yaw,0,0,1,1,1,o.type!=='oil'&&o.type!=='pothole');
+        const hover=pickup && window.BusBoost.hover(t,z);
+        const yaw=Math.atan(roadSlope(z))+(hover?hover.turn:0);
+        place(item(o.type),x,hover?hover.lift:0,z,yaw,0,0,1,1,1,o.type!=='oil'&&o.type!=='pothole');
       }
       const {x,y,yaw,roll,pitch}=pose;
       const spot=landingSpot(s,bus);
@@ -249,7 +244,7 @@
         place(item('rocketFlame'),n.x,n.y,n.z,yaw,roll,pitch,rocket.width,rocket.width,rocket.length,false);
       }
       if(s.boost) {
-        const behind=bus.taillamp[2]+.36+.16*Math.sin(t*16);
+        const behind=window.BusBoost.trailPosition(bus.taillamp[2],t);
         const z=behind*Math.cos(pitch);
         place(streak,x+z*Math.sin(yaw),y+.085-behind*Math.sin(pitch),d+z*Math.cos(yaw),yaw,roll,pitch,1,1,1,false);
       }

@@ -343,6 +343,15 @@
 
   const suspensionPivot=.8;
   const reducedMotion=window.matchMedia?.('(prefers-reduced-motion: reduce)');
+  const boost=window.BusBoost;
+
+  function coachHalo(remaining) {
+    const age=boost.duration-remaining;
+    if(age>=boost.haloDuration) return null;
+    const ring=boost.halo(age/boost.haloDuration);
+    // The career chassis scales each vehicle to the same 2.7 x 9.2 metre footprint.
+    return {width:ring.width*2.7/2.37, length:ring.length*9.2/5.23, opacity:ring.light*.92};
+  }
 
   function careerCoach(busId,lowDetail=false) {
     const fleet=window.BusModels;
@@ -414,6 +423,17 @@
     step.castShadow=step.receiveShadow=true;
     step.position.y=-suspensionPivot;
     suspensionMount.add(step);
+    const streak=new T.Mesh(asset('boostTrail',boost.trail),material);
+    streak.scale.set(sx,1,-sz);
+    streak.receiveShadow=true;
+    chassis.add(streak);
+    const haloMaterial=lighting.createMaterial({transparent:true});
+    const halo=new T.Mesh(asset('boostHalo',()=>{
+      const mesh=new Mesh();
+      mesh.ring(.89,'#ffd879');
+      return mesh;
+    }),haloMaterial);
+    chassis.add(halo);
     const labels=[];
     function stopName(s) {
       const surface=document.createElement('canvas');
@@ -587,7 +607,24 @@
         d:0,time:state.time,lapBiomes:state.map,busOpacity:1,level:window.BusSky.graphicsLevels[settings.detail]});
       for(const label of labels) label.mat.color.fromArray(light.tint).convertSRGBToLinear();
       step.visible=state.doorsOpen;
+      streak.visible=state.boost>0;
+      const ring=streak.visible && coachHalo(state.boost);
+      halo.visible=!!ring;
+      if(streak.visible) {
+        const tail=boost.trailPosition(coach.taillamp[2],state.time);
+        streak.position.set(0,.095-rig.baseY,-tail*sz);
+        if(ring) {
+          halo.position.y=.10-rig.baseY;
+          halo.scale.set(ring.width,1,ring.length);
+          haloMaterial.opacity=ring.opacity;
+        }
+      }
       for(const obj of dynamic.values()) obj.visible=false;
+      for(const pickup of state.boosts) {
+        if(pickup.respawnAt) continue;
+        const hover=boost.hover(state.time,pickup.x+pickup.y);
+        actor('boost'+pickup.id,asset('boost',boost.model),pickup.x,.08+hover.lift,pickup.y,pickup.heading+hover.turn);
+      }
       for(const [i,s] of state.lights.entries()) {
         actor('light'+i,asset('light'+s.aspect,()=>signalModel(s.aspect)),s.x,0,s.y,s.heading);
       }
@@ -616,6 +653,7 @@
     function dispose() {
       for(const g of geometries.values()) g.dispose();
       for(const fade of coneFades.values()) fade.dispose();
+      haloMaterial.dispose();
       for(const l of labels) {l.texture.dispose(); l.mat.dispose(); l.geom.dispose();}
       lighting.dispose(); sky.dispose(); renderer.dispose();
       dynamic.clear(); geometries.clear();
@@ -775,6 +813,11 @@
         shadow(lot.x,lot.y,-lot.yaw,dims[0]*lot.size,dims[1]*lot.size,dims[2]*lot.size);
       }
       const cones=state.cones.map(cone=>conePose(cone,state.time)).filter(Boolean);
+      for(const p of state.boosts) {
+        if(p.respawnAt) continue;
+        const height=1.05+boost.hover(state.time,p.x+p.y).lift;
+        shadow(p.x+rayX*height,p.y+rayY*height,p.heading,1.12,.28,.6);
+      }
       for(const p of cones) {
         ctx.globalAlpha=.44*light.shadow*p.alpha;
         shadow(p.x+rayX*p.lift,p.y+rayY*p.lift,p.heading,.95,.9,1.15);
@@ -852,6 +895,31 @@
       for(const sign of state.signs) {
         dot(ctx,sign.x,sign.y,.65,sign.kind==='crossing'?'#649aaf':'#cd6257');
         dot(ctx,sign.x,sign.y,.37,CREAM);
+      }
+      for(const p of state.boosts) {
+        if(p.respawnAt) continue;
+        const hover=boost.hover(state.time,p.x+p.y);
+        ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(b.heading);
+        ctx.scale(1.3*Math.cos(hover.turn),-1.3);
+        ctx.translate(0,hover.lift);
+        ctx.beginPath();
+        for(const [x,y] of boost.outline) ctx.lineTo(x,y);
+        ctx.closePath(); ctx.lineJoin='round'; ctx.lineWidth=.17; ctx.strokeStyle='#a96a29'; ctx.stroke();
+        ctx.fillStyle='#ffdb50'; ctx.fill();
+        ctx.restore();
+      }
+      if(state.boost>0) {
+        ctx.save(); ctx.translate(b.x,b.y); ctx.rotate(b.heading);
+        const ring=coachHalo(state.boost);
+        if(ring) {
+          ctx.save(); ctx.scale(ring.width,ring.length); ctx.globalAlpha=ring.opacity;
+          ctx.strokeStyle='#ffd879'; ctx.lineWidth=.11;
+          ctx.beginPath(); ctx.arc(0,0,.945,0,TAU); ctx.stroke(); ctx.restore();
+        }
+        ctx.scale(rig.sx,-rig.sz);
+        ctx.translate(0,boost.trailPosition(coach.taillamp[2],state.time));
+        for(const triangle of boost.streaks) polygon(ctx,triangle,'#ffcc66');
+        ctx.restore();
       }
       for(const p of cones) {
         ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(p.heading);

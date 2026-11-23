@@ -49,7 +49,7 @@
   }
 
   function refreshInstruments(animate = true) {
-    const {stops, nearbyStop, passengers, bus, doorsOpen, serviceComplete, district, map, fuel, nearbyFuelStation, refueling} = sim.state;
+    const {stops, nearbyStop, passengers, bus, doorsOpen, serviceComplete, district, map, fuel, nearbyFuelStation, refueling, boost} = sim.state;
     const requested = passengers.length && stops.find(stop => stop.id === passengers[0].destination);
     const reserve = fuel <= reserveLevel;
     const closest = nearbyStop || stops.reduce((best, stop) => stopDistance(best) < stopDistance(stop) ? best : stop);
@@ -66,6 +66,8 @@
     balanceDial(driver.balance, animate);
     onboardDial(passengers.length, animate);
     speedDial(Math.abs(Math.round(bus.speed * 3.6)), animate);
+    write('speed-label', boost > 0 ? 'Turbo' : 'Vitesse');
+    $('speed-instrument').classList.toggle('turbo-active', boost > 0);
     const level = Math.ceil(fuel);
     fuelDial(level, animate);
     const meter = $('fuel-meter');
@@ -107,6 +109,9 @@
     } else if (event.type === 'cone') {
       audio.effect('cone');
       notices.push({type:'cone', title:'Oups !', message:event.message});
+    } else if (event.type === 'boost') {
+      audio.effect('boost');
+      notices.push({type:'boost', title:'Turbo', message:'Accélération'});
     } else if (event.type === 'doors' && sim.state.doorsOpen) {
       airBrake();
     } else if (event.type === 'refueled') {
@@ -121,8 +126,8 @@
     audio.airBrake();
   }
   function updateEngine(braking) {
-    const {time, bus} = sim.state;
-    audio.update({time, speed:Math.abs(bus.speed) * 3.6, braking});
+    const {time, bus, boost} = sim.state;
+    audio.update({time, speed:Math.abs(bus.speed) * 3.6, braking, boost});
     nextEngineUpdate = time + .09;
   }
 

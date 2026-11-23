@@ -33,6 +33,7 @@
   const REAR_AXLE_Z = -1.55;
   const TIRE_WIDTH = 0.29;
   const WHEELBASE = window.BusHandling.wheelbase;
+  const turbo = window.BusBoost;
   const MAX_HEADING_FROM_ROAD = 0.54;
   const RAMP = {halfWidth: 1.45, halfLength: 2.6, lipHeight: 0.9, wheelMargin: 0.35};
   const RAMP_CLEARANCE = 12;
@@ -50,7 +51,7 @@
     pothole: [1.12, 0.97], boost: [0.57, 0.20], repair: [0.56, 0.32], rocket: [0.76, 0.55]
   };
   const HAZARDS = ['cone', 'barrier', 'oil', 'pothole'];
-  const IMPACT_DURATIONS = { cone: 0.95, barrier: 0.76, oil: 0.68, repair: 0.85, boost: 0.50 };
+  const IMPACT_DURATIONS = { cone: 0.95, barrier: 0.76, oil: 0.68, repair: 0.85, boost: turbo.haloDuration };
   const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
   const choose = items => items[Math.floor(Math.random() * items.length)];
   const isPickup = type => type === 'repair' || type === 'boost' || type === 'rocket';
@@ -336,7 +337,7 @@
         return;
       }
       if (type === 'boost') {
-        state.boost = 4.2;
+        state.boost = turbo.duration;
         emit(type, 'Turbo', 100);
         return;
       }
@@ -464,12 +465,12 @@
         state.speed = Math.max(state.jump.entrySpeed, state.speed - RAMP_KICK_KMH * dt / RAMP_KICK_SECONDS);
       } else {
         const cruise = Math.min(114, 78 + state.distance * 0.012);
-        let target = (state.flat ? cruise * 0.70 : cruise) + (state.boost ? 39 : 0);
+        let target = (state.flat ? cruise * 0.70 : cruise) + (state.boost ? turbo.speedBonus : 0);
         if (state.braking) target = Math.min(34, target);
         target *= 1 - state.shoulderContact * (1 - SHOULDER_SPEED_FACTOR);
         // Extra drag above the normal turbo and ramp speeds softens rocket burnout.
-        const deceleration = 62 + 1.5 * Math.max(0, state.speed - 165);
-        const rate = state.speed > target ? deceleration : state.boost ? 36 : 13;
+        const deceleration = turbo.deceleration + 1.5 * Math.max(0, state.speed - 165);
+        const rate = state.speed > target ? deceleration : state.boost ? turbo.acceleration : 13;
         state.speed += clamp(target - state.speed, -rate * dt, rate * dt);
       }
       updateTransmission(state);

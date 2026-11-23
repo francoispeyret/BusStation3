@@ -5,7 +5,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const context = vm.createContext({window:{}});
-for (const file of ['mesh', 'bus-handling', 'career-motion', 'career-physics', 'career-sim', 'career-roads']) {
+for (const file of ['mesh', 'bus-boost', 'bus-handling', 'career-motion', 'career-physics', 'career-sim', 'career-roads']) {
   const filename = path.join(__dirname, '../dist', file + '.js');
   vm.runInContext(fs.readFileSync(filename, 'utf8'), context, {filename});
 }

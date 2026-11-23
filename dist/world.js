@@ -234,6 +234,7 @@
   function prop(type) {
     if(type==='rocket'||type==='rocketMotor'||type==='rocketFlame') return rocketModel(type);
     if(type==='cone') return window.BusCone.model();
+    if(type==='boost') return window.BusBoost.model();
     const m=new Mesh();
     if(type==='barrier') {
       for(const side of [-1,1]) {
@@ -293,11 +294,7 @@
     } else if(type==='waterRipple'||type==='repairHalo'||type==='boostHalo') {
       const col=type==='waterRipple'?'#c1ece9':type==='repairHalo'?'#8fffd0':'#ffd879';
       const inner=type==='waterRipple'?.95:.89;
-      for(let i=0;i<32;i++) {
-        const a=TAU*i/32, b=TAU*(i+1)/32;
-        const x=Math.cos(a), z=Math.sin(a), u=Math.cos(b), v=Math.sin(b);
-        m.quad([x*inner,0,z*inner],[x,0,z],[u,0,v],[u*inner,0,v*inner],col);
-      }
+      m.ring(inner,col);
     } else if(type==='waterDrop') {
       m.rings(0,-.09,0,[[.02,0,.02],[.085,.08,.085],[.05,.16,.05],[.01,.24,.01]],6,'#a7e4e8');
     } else if(type==='repairSpark') {
@@ -308,15 +305,6 @@
         };
         m.tri([0,0,0],point(i),point(i+1),i%2?'#eeffdc':'#acffdb');
       }
-    } else {
-      const shape=[[-.10,1.73],[-.56,.91],[-.12,.91],[-.31,.38],[.58,1.28],[.13,1.28],[.38,1.73]];
-      // Two convex parts share the lightning bolt's central diagonal.
-      const polys=[[0,1,2,5,6],[2,3,4,5]];
-      for(const poly of polys) for(let i=1;i<poly.length-1;i++) for(const z of [-.14,.14]) {
-        const p=k=>[shape[k][0],shape[k][1],z];
-        m.tri(p(poly[0]),p(poly[i]),p(poly[i+1]),'#ffdb50');
-      }
-      shape.forEach(([x,y],i)=>{const [u,v]=shape[(i+1)%shape.length];m.quad([x,y,-.14],[u,v,-.14],[u,v,.14],[x,y,.14],'#e99932');});
     }
     return m;
   }
@@ -368,12 +356,13 @@
           part('waterDrop',across,.11+3.7*t*(1-t),forward,0,-side*t*.9,0,size,size,size,(1-ease((t-.60)/.40))*ease(p/.08));
         }
       } else if(pickup) {
-        const repair=hit.type==='repair', spread=1-(1-p)*(1-p);
-        const light=(1-ease((p-.24)/.76))*(.40+.60*ease(p/.12));
+        const repair=hit.type==='repair';
+        const ring=window.BusBoost.halo(p);
         const halo=repair?'repairHalo':'boostHalo';
-        part(halo,0,.055,0,0,0,0,1.47+1.13*spread,1,2.88+1.23*spread,light*.92);
+        part(halo,0,.055,0,0,0,0,ring.width,1,ring.length,ring.light*.92);
         if(repair) {
-          part(halo,0,.050,0,0,0,0,1.48+1.60*spread,1,2.90+1.73*spread,light*.29);
+          const spread=1-(1-p)*(1-p);
+          part(halo,0,.050,0,0,0,0,1.48+1.60*spread,1,2.90+1.73*spread,ring.light*.29);
           for(let i=0;i<8;i++) {
             const side=i%2?1:-1, row=Math.floor(i/2), t=(p-(i%3)*.065)/.84;
             if(t<=0||t>=1) continue;
@@ -1308,8 +1297,9 @@
       }
       for(const o of s.objects||[]) if(o.z>=-8 && o.z<=FAR) {
         const z=d+o.z, pickup=o.type==='repair'||o.type==='boost'||o.type==='rocket', t=s.time||0;
-        actors.push({type:o.type,x:roadX(z)+o.lane*LANE,z,y:pickup?.12*Math.sin(t*3+z*.06):0,
-          yaw:Math.atan(roadSlope(z))+(pickup?.29*Math.sin(t*2.5+z*.17):0),ground:o.type==='oil'||o.type==='pothole'});
+        const hover=pickup && window.BusBoost.hover(t,z);
+        actors.push({type:o.type,x:roadX(z)+o.lane*LANE,z,y:hover?hover.lift:0,
+          yaw:Math.atan(roadSlope(z))+(hover?hover.turn:0),ground:o.type==='oil'||o.type==='pothole'});
       }
       if(busOpacity>0) actors.push({type:'bus',...pose,z:d,alpha:coachOpacity(s,busOpacity)});
       if(rocket) {

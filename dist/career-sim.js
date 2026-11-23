@@ -4,6 +4,7 @@
   const fare = 3;
   const capacity = 24;
   const topSpeed = 90 / 3.6;
+  const turbo = window.BusBoost;
   const coneLimit = 6;
   const metresPerFuelPercent = 40;
   const refillPercentPerSecond = 20;
@@ -55,19 +56,21 @@
       ['fork', 'orchard'], ['fork', 'farm']]) street(a, b, 'country');
     const map = {nodes, roads, byId, townEdge: 200, bounds: {minX: -262, minY: -330, maxX: 720, maxY: 354}};
     map.fuelStations = [
-      {id:'centre', name:'Relais du Centre', ...roadside(map, 'C', 'E', .47, 9.15)},
-      {id:'vergers', name:'Relais des Vergers', ...roadside(map, 'fork', 'orchard', .55, 8.35)}
+      {id:'centre', name:'Relais du Centre', ...roadPosition(map, 'C', 'E', .47, 9.15)},
+      {id:'vergers', name:'Relais des Vergers', ...roadPosition(map, 'fork', 'orchard', .55, 8.35)}
     ];
     return map;
   }
 
-  // Sidewalk furniture faces traffic coming from 'from'. x and y are metres.
-  function roadside(map, from, to, fraction, setback) {
+  // The lateral offset is measured in metres to the right of the direction of travel.
+  function roadPosition(map, from, to, fraction, lateral = 0) {
     const a = map.byId[from], b = map.byId[to], axis = direction(a, b);
-    return {...offset(a, axis, distance(a, b) * fraction, setback), heading: Math.atan2(axis.x, -axis.y)};
+    return {...offset(a, axis, distance(a, b) * fraction, lateral), heading: Math.atan2(axis.x, -axis.y)};
   }
 
   function makeStops(map) {
+    const cityDemand = {minInterval:45, maxInterval:75, limit:3};
+    const countryDemand = {minInterval:70, maxInterval:110, limit:2};
     const places = [
       ['gare', 'Gare centrale', 'S', 'C', 55 / 115, 9.2],
       ['marche', 'Place du Marché', 'C', 'N', 53 / 110, 9.2],
@@ -78,8 +81,11 @@
       ['verger', 'Les Vergers', 'hill', 'orchard', .46, countryRoadside],
       ['ferme', 'Ferme des Prés', 'farm', 'SE', .42, countryRoadside]
     ];
-    return places.map(([id, name, from, to, fraction, margin]) =>
-      ({id, name, ...roadside(map, from, to, fraction, margin), waiting: [], nextArrival: 0}));
+    return places.map(([id, name, from, to, fraction, margin]) => {
+      const position = roadPosition(map, from, to, fraction, margin);
+      const demand = position.x <= map.townEdge ? cityDemand : countryDemand;
+      return {id, name, ...position, demand, waiting:[], nextArrival:0};
+    });
   }
 
   function makeSignals(map) {
@@ -100,7 +106,7 @@
       ['stop', 'W', 'NW', .91, 9.1], ['stop', 'SE', 'S', .90, 9.1],
       ['speed50', 'NE', 'mill', .23, countryRoadside], ['crossing', 'NW', 'W', .28, 9.1],
       ['stop', 'farm', 'fork', .93, countryRoadside], ['speed30', 'mill', 'NE', .85, countryRoadside]
-    ].map(([kind, from, to, fraction, margin]) => ({kind, from, to, ...roadside(map, from, to, fraction, margin)}));
+    ].map(([kind, from, to, fraction, margin]) => ({kind, from, to, ...roadPosition(map, from, to, fraction, margin)}));
     return {lights, signs};
   }
 
@@ -308,8 +314,11 @@
     if (state.doorsOpen || state.refueling) return;
     let acceleration = 0;
     if (input.brake) acceleration = bus.speed > .15 ? -13.5 : -3.5;
+    else if (state.boost && (bus.speed > .4 || (input.accelerate && bus.speed >= 0))) acceleration = turbo.acceleration / 3.6;
     else if (input.accelerate) acceleration = bus.speed < -.15 ? 9 : 6.6;
-    if (acceleration && !brakeHeldAtStop) bus.speed = clamp(bus.speed + acceleration * dt, -4.2, topSpeed);
+    const limit = topSpeed + (state.boost ? turbo.speedBonus / 3.6 : 0);
+    if (bus.speed > limit) bus.speed = Math.max(limit, bus.speed - turbo.deceleration / 3.6 * dt);
+    else if (acceleration && !brakeHeldAtStop) bus.speed = clamp(bus.speed + acceleration * dt, -4.2, limit);
     else bus.speed = Math.sign(bus.speed) * Math.max(0, Math.abs(bus.speed) - (.85 + .003 * bus.speed * bus.speed) * dt);
     const drag = clamp(input.steer || 0, -1, 1);
     const steering = Math.max(drag, Number(!!input.right)) - Math.max(-drag, Number(!!input.left));
@@ -370,6 +379,36 @@
     return options[Math.floor(random() * options.length)];
   }
 
+  function touchesBus(bus, item, radius) {
+    const dx = item.x - bus.x, dy = item.y - bus.y;
+    if (dx*dx + dy*dy > 36) return false;
+    const axis = forwardOf(bus.heading);
+    const along = dx * axis.x + dy * axis.y;
+    const across = dy * axis.x - dx * axis.y;
+    return Math.hypot(Math.max(0, Math.abs(along) - 4.6), Math.max(0, Math.abs(across) - 1.35)) <= radius;
+  }
+
+  function makeBoosts(map) {
+    const passages = [['S', 'C', .71], ['W', 'NW', .34], ['E', 'SE', .68],
+      ['mill', 'hill', .42], ['fork', 'farm', .56], ['orchard', 'farm', .4]];
+    return passages.map(([from, to, fraction], id) =>
+      ({id, ...roadPosition(map, from, to, fraction), respawnAt:0, touching:false}));
+  }
+
+  function updateBoosts(state, random, onEvent) {
+    for (const pickup of state.boosts) {
+      if (pickup.respawnAt && state.time >= pickup.respawnAt) pickup.respawnAt = 0;
+      const touching = touchesBus(state.bus, pickup, .57);
+      // Track contact during the cooldown too, so parking on a bolt cannot retrigger it.
+      if (!pickup.respawnAt && touching && !pickup.touching) {
+        state.boost = turbo.duration;
+        pickup.respawnAt = state.time + 15 + 30 * random();
+        onEvent({type:'boost', message:'Turbo'});
+      }
+      pickup.touching = touching;
+    }
+  }
+
   function updateCones(state, sites, random, onEvent) {
     const bus = state.bus;
     for (const cone of state.cones) {
@@ -380,15 +419,11 @@
         else cone.respawnAt = state.time + 2;
         continue;
       }
-      // Each physics substep moves at most 0.84 m. Test the cone's footprint
-      // against the oriented coach, including its front and rear corners.
+      if (Math.abs(bus.speed) < .01 || !touchesBus(bus, cone, .46)) continue;
       const dx = cone.x - bus.x, dy = cone.y - bus.y;
-      if (Math.abs(bus.speed) < .01 || dx*dx + dy*dy > 30) continue;
       const heading = bus.heading + (bus.speed < 0 ? Math.PI : 0);
       const forward = forwardOf(heading);
-      const along = dx * forward.x + dy * forward.y;
       const across = dy * forward.x - dx * forward.y;
-      if (Math.hypot(Math.max(0, Math.abs(along) - 4.6), Math.max(0, Math.abs(across) - 1.35)) > .46) continue;
       const side = across < 0 ? -1 : 1;
       const axis = direction(cone.road.a, cone.road.b);
       const vergeSide = side * Math.sign(axis.x * forward.x + axis.y * forward.y);
@@ -406,6 +441,7 @@
     const bus = {...spawn, heading:depot.heading, speed:0, steer:0, vx:0, vy:0, yawRate:0,
       motion:window.CareerMotion.create()};
     const state = {map, stops, ...makeSignals(map), bus,
+      boost:0, boosts:makeBoosts(map),
       time: 0, distance: 0, earnings: 0, passengers: [], people: [], doorsOpen: false, serviceComplete: false,
       fuel:100, nearbyFuelStation:null, refueling:false, outOfFuel:false,
       nearbyStop: stops[0], district: 'Centre-ville', collisions: 0, cones: []};
@@ -417,18 +453,23 @@
     }
     updateLights(state);
     let serial = 0, brakeHeldAtStop = false, filledHere = false;
-    function queuePassenger(stop, index) {
+    function queuePassenger(stop) {
+      let index = 0;
+      while (stop.waiting.some(person => person.slot === index)) index++;
       const number = serial++;
       const choices = stops.filter(item => item !== stop);
       const dest = choices[(index === 0 ? stops.indexOf(stop) : number + index) % choices.length];
       const side = index % 2 === 0 ? .8 : 1.6;
       const position = offset(stop, forwardOf(stop.heading), -1.6 - 1.15 * index, side);
-      stop.waiting.push({id: number, color: coats[number % coats.length], destination: dest.id, ...position});
+      stop.waiting.push({id: number, slot:index, color: coats[number % coats.length], destination: dest.id, ...position});
     }
-    stops.forEach((stop, i) => {
-      for (let j = 0; j < 2 + (i % 3); j++) queuePassenger(stop, j);
-      stop.nextArrival = 25 + 3 * i;
-    });
+    function scheduleArrival(stop, opening = false) {
+      const {minInterval, maxInterval} = stop.demand;
+      const delay = opening ? minInterval * (.3 + .7 * random()) : minInterval + random() * (maxInterval - minInterval);
+      stop.nextArrival = state.time + delay;
+    }
+    queuePassenger(depot);
+    for (const stop of stops) scheduleArrival(stop, stop !== depot);
 
     function setNearbyStop() {
       let nearest = null, best = 9.5;
@@ -469,6 +510,7 @@
         if (state.fuel === 0) {
           bus.speed = bus.vx = bus.vy = bus.yawRate = 0;
           state.outOfFuel = true;
+          state.boost = 0;
           onEvent({type:'fuel-empty'});
         }
         return;
@@ -518,6 +560,7 @@
       if (!startTransfer(stop)) {
         state.doorsOpen = false;
         state.serviceComplete = true;
+        scheduleArrival(stop);
         // A brake held throughout boarding keeps the bus parked until released.
         brakeHeldAtStop = !!input.brake;
         onEvent({type: 'doors', message: 'Portes fermées · Bonne route !'});
@@ -526,6 +569,7 @@
 
     function step(dt, input) {
       state.time += dt;
+      state.boost = Math.max(0, state.boost - dt);
       updateLights(state);
       const oldX = bus.x, oldY = bus.y, oldHeading = bus.heading, oldSpeed = bus.speed;
       if (!input.brake) brakeHeldAtStop = false;
@@ -536,10 +580,11 @@
       updateFuelStop(dt, input, oldSpeed);
       if (state.outOfFuel) return;
       for (const stop of stops) {
-        if (state.time >= stop.nextArrival && stop.waiting.length < 4 && distance(state.bus, stop) > 35) {
-          queuePassenger(stop, stop.waiting.length);
-          stop.nextArrival = state.time + 30;
-        }
+        if (state.time < stop.nextArrival) continue;
+        scheduleArrival(stop);
+        if (stop.waiting.length >= stop.demand.limit || (state.doorsOpen && stop === state.nearbyStop)) continue;
+        queuePassenger(stop);
+        if (stop === state.nearbyStop) state.serviceComplete = false;
       }
       for (const car of state.cars) moveTraffic(car, state, dt);
       for (const car of state.cars) {
@@ -568,6 +613,7 @@
         }
       }
       updateCones(state, sites, random, onEvent);
+      updateBoosts(state, random, onEvent);
       setNearbyStop();
       updateService(dt, input, oldSpeed);
       window.CareerMotion.update(bus, dt, oldSpeed, input);

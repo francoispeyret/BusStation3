@@ -7,10 +7,11 @@
   <title>Carrière · Bus Station 3</title>
   <link rel="icon" href="assets/bus-mark.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css?v=20">
-  <link rel="stylesheet" href="career.css?v=5">
+  <link rel="stylesheet" href="career.css?v=6">
   <link rel="stylesheet" href="career-profiles.css?v=1">
   <script defer src="assets/vendor/number-flow-0.6.2.js"></script>
-  <script defer src="mesh.js?v=4"></script>
+  <script defer src="mesh.js?v=5"></script>
+  <script defer src="bus-boost.js?v=1"></script>
   <script defer src="traffic-cone.js?v=1"></script>
   <script defer src="bus-models.js?v=2"></script>
   <script defer src="biomes/catalog.js?v=2"></script>
@@ -30,10 +31,10 @@
   <script defer src="career-profiles.js?v=1"></script>
   <script defer src="career-physics.js?v=1"></script>
   <script defer src="career-motion.js?v=1"></script>
-  <script defer src="career-sim.js?v=7"></script>
+  <script defer src="career-sim.js?v=8"></script>
   <script defer src="career-roads.js?v=1"></script>
-  <script defer src="career-render.js?v=7"></script>
-  <script defer src="career.js?v=6"></script>
+  <script defer src="career-render.js?v=8"></script>
+  <script defer src="career.js?v=7"></script>
 </head>
 <body class="career-app">
   <svg class="career-icons" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -79,7 +80,7 @@
       <div class="instruments">
         <div class="instrument fare"><svg class="icon" aria-hidden="true"><use href="#ic-ticket"/></svg><div><span class="instrument-label">Caisse</span><div class="reading"><strong><number-flow id="balance">0</number-flow></strong><small>€$</small></div></div></div>
         <div class="instrument"><svg class="icon" aria-hidden="true"><use href="#ic-people"/></svg><div><span class="instrument-label">À bord</span><div class="reading"><strong><number-flow id="onboard">0</number-flow></strong></div></div></div>
-        <div class="instrument"><svg class="icon" aria-hidden="true"><use href="#ic-speed"/></svg><div><span class="instrument-label">Vitesse</span><div class="reading"><strong><number-flow id="bus-speed">0</number-flow></strong><small>km/h</small></div></div></div>
+        <div class="instrument" id="speed-instrument"><svg class="icon" aria-hidden="true"><use href="#ic-speed"/></svg><div><span class="instrument-label" id="speed-label">Vitesse</span><div class="reading"><strong><number-flow id="bus-speed">0</number-flow></strong><small>km/h</small></div></div></div>
         <div class="instrument fuel" id="fuel-instrument">
           <svg class="icon" aria-hidden="true"><use href="#ic-fuel"/></svg>
           <div><span class="instrument-label" id="fuel-label">Essence</span>

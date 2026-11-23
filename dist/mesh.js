@@ -75,6 +75,13 @@
         this.tri(c,[x+rx*Math.cos(a),y,z+rz*Math.sin(a)],[x+rx*Math.cos(b),y,z+rz*Math.sin(b)],col);
       }
     }
+    ring(inner,color,n=32) {
+      for(let i=0;i<n;i++) {
+        const a=TAU*i/n,b=TAU*(i+1)/n;
+        const x=Math.cos(a),z=Math.sin(a),u=Math.cos(b),v=Math.sin(b);
+        this.quad([x*inner,0,z*inner],[x,0,z],[u,0,v],[u*inner,0,v*inner],color);
+      }
+    }
     /* A vertically stacked, clipped-corner rectangle for coachwork and trim. */
     shell(levels,color) {
       const contour=([w,y,l,r]) => [[-w+r,y,-l],[w-r,y,-l],[w,y,-l+r],[w,y,l-r],[w-r,y,l],[-w+r,y,l],[-w,y,l-r],[-w,y,-l+r]];

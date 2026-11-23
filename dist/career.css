@@ -115,6 +115,7 @@
 .instrument>.icon { color:var(--lilac); width:25px; height:25px; }
 .instrument strong { display:block; font:clamp(17px,2vw,26px)/1.1 var(--display); }
 .instrument.fare strong,.instrument.fare>.icon { color:var(--green); }
+.instrument.turbo-active .instrument-label,.instrument.turbo-active strong,.instrument.turbo-active>.icon { color:var(--yellow); }
 .fuel { --gauge-color:var(--green); }
 .fuel.on-reserve { --gauge-color:var(--yellow); }
 .fuel.on-reserve>.icon,.fuel.on-reserve strong { color:var(--gauge-color); }

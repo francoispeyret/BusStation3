@@ -5,7 +5,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const context = vm.createContext({window: {}});
-for (const file of ['mesh.js', 'bus-handling.js', 'career-motion.js', 'career-physics.js', 'career-sim.js']) {
+for (const file of ['mesh.js', 'bus-handling.js', 'bus-boost.js', 'career-motion.js', 'career-physics.js', 'career-sim.js']) {
   const filename = path.join(__dirname, '../dist', file);
   vm.runInContext(fs.readFileSync(filename, 'utf8'), context, {filename});
 }
@@ -66,7 +66,7 @@ test('waiting at the station boards riders automatically and braking at the mark
   assert.ok(state.bus.speed < 0, 'releasing and pressing the brake again selects reverse');
 });
 
-test('a stop is served once per visit and a moving bus can pass waiting riders', () => {
+test('a recently served stop stays empty and a moving bus can pass later arrivals', () => {
   const doorEvents = [];
   const sim = create({onEvent:event => { if (event.type === 'doors') doorEvents.push(event); }});
   const state = sim.state, start = state.nearbyStop;
@@ -78,17 +78,19 @@ test('a stop is served once per visit and a moving bus can pass waiting riders',
   const firstEarnings = state.earnings;
   assert.equal(firstEarnings, firstGroup * 3);
   assert.equal(doorEvents.length, 2);
-  tick(sim, 35);
+  tick(sim, 8);
   assert.equal(start.waiting.length, 0);
   assert.equal(state.earnings, firstEarnings);
   assert.equal(state.doorsOpen, false);
   assert.equal(doorEvents.length, 2, 'standing at the same platform does not reopen the doors');
 
-  // Back away from the platform until fresh passengers can arrive, then drive past them.
+  // Leave the platform. Crossing the service boundary does not summon passengers.
   driveUntil(sim, {brake:true}, bus => bus.y > start.y + 39);
   assert.equal(state.nearbyStop, null);
+  assert.equal(start.waiting.length, 0);
+  tick(sim, start.nextArrival - state.time + .1);
   const waiting = start.waiting.length;
-  assert.ok(waiting > 0);
+  assert.equal(waiting, 1);
   driveUntil(sim, {accelerate:true}, () => state.nearbyStop === start);
   assert.ok(state.bus.speed > 5);
   driveUntil(sim, {accelerate:true}, bus => bus.y < start.y - 12);
@@ -107,10 +109,61 @@ test('a stop is served once per visit and a moving bus can pass waiting riders',
   assert.equal(doorEvents.length, 4);
 });
 
+test('demand grows one rider at a time with smaller and slower queues in the countryside', () => {
+  for (const [stopId, limit, minimum, maximum] of [['marche', 3, 45, 75], ['ferme', 2, 70, 110]]) {
+    const sim = create(), {state} = sim, depot = state.nearbyStop;
+    assert.equal(depot.waiting.length, 1);
+    assert.ok(state.stops.every(item => item === depot || item.waiting.length === 0));
+    state.cars = [];
+    Object.assign(state.bus, {x:0, y:0});
+    const stop = state.stops.find(item => item.id === stopId);
+    const next = stop.nextArrival - state.time;
+    assert.equal(stop.waiting.length, 0);
+    tick(sim, next - .1);
+    assert.equal(stop.waiting.length, 0);
+    tick(sim, .2);
+    assert.equal(stop.waiting.length, 1);
+    for (let count = 2; count <= limit; count++) {
+      const delay = stop.nextArrival - state.time;
+      assert.ok(delay >= minimum - .2 && delay <= maximum);
+      tick(sim, delay - .1);
+      assert.equal(stop.waiting.length, count - 1);
+      tick(sim, .2);
+      assert.equal(stop.waiting.length, count);
+    }
+    tick(sim, maximum + 1);
+    assert.equal(stop.waiting.length, limit);
+  }
+});
+
+test('waiting at the same platform long enough lets a newly arrived rider board', () => {
+  const sim = create(), {state} = sim;
+  const station = state.nearbyStop;
+  state.cars = [];
+  tick(sim, 2);
+  assert.equal(state.earnings, 3);
+  assert.equal(station.waiting.length, 0);
+  tick(sim, station.nextArrival - state.time - .1);
+  assert.equal(state.earnings, 3);
+  assert.equal(state.doorsOpen, false);
+  tick(sim, .2);
+  assert.equal(state.people[0].phase, 'boarding');
+  tick(sim, 1);
+  assert.equal(state.passengers.length, 2);
+  assert.equal(state.earnings, 6);
+});
+
 test('a full bus automatically lets a rider off and boards only as many as there are free seats', () => {
   const sim = create();
   const state = sim.state, station = state.nearbyStop;
+  state.cars = [];
+  const parked = {x:state.bus.x, y:state.bus.y};
+  Object.assign(state.bus, {x:0, y:0});
+  tick(sim, 240);
+  Object.assign(state.bus, parked);
   const queue = station.waiting.map(person => person.id);
+  assert.equal(queue.length, 3);
+  station.nextArrival = state.time + 1.2;
   state.passengers = Array.from({length:24}, (_,i) => ({id:100+i, destination:i === 0 ? station.id : 'marche'}));
   sim.update(1/60);
   assert.equal(state.people[0].id, 100);
@@ -122,6 +175,10 @@ test('a full bus automatically lets a rider off and boards only as many as there
   assert.deepEqual(station.waiting.map(person => person.id), queue.slice(1));
   assert.equal(state.earnings, 3);
   assert.equal(state.doorsOpen, false);
+  Object.assign(state.bus, {x:0, y:0});
+  tick(sim, station.nextArrival - state.time + .1);
+  assert.equal(station.waiting.length, 3);
+  assert.equal(new Set(station.waiting.map(person => [person.x, person.y].join(','))).size, 3);
 });
 
 test('the driver can turn onto a second road that leads out into the countryside', () => {
@@ -447,4 +504,86 @@ test('reversing into a parked car pushes it backwards and slows the coach in rev
   tick(sim, .6, {brake:true});
   assert.ok(car.y > initialY + 2 && bus.speed < 0);
   assert.equal(events.length, 1);
+});
+
+function boostScenario(options) {
+  const sim = create(options);
+  sim.state.cars = [];
+  sim.state.cones = [];
+  const {bus, boosts} = sim.state, bolt = boosts[0];
+  function approach(offset = 0) {
+    const cos = Math.cos(bolt.heading), sin = Math.sin(bolt.heading);
+    Object.assign(bus, {heading:bolt.heading, speed:25, x:bolt.x-10*sin+offset*cos, y:bolt.y+10*cos+offset*sin});
+  }
+  return {sim, state:sim.state, bus, bolt, approach};
+}
+
+test('bolts occupy the centre of distinct city and country roads and can be passed on either side', () => {
+  const {sim, state, approach} = boostScenario();
+  const streets = new Set();
+  for (const bolt of state.boosts) {
+    const road = state.map.roads.find(({a, b}) => {
+      const toA = Math.hypot(bolt.x-a.x, bolt.y-a.y), toB = Math.hypot(bolt.x-b.x, bolt.y-b.y);
+      return Math.min(toA,toB) > 30 && Math.abs(toA+toB-Math.hypot(a.x-b.x,a.y-b.y)) < .001;
+    });
+    assert.ok(road && !streets.has(road));
+    streets.add(road);
+  }
+  assert.equal(new Set([...streets].map(road => road.kind)).size, 2);
+  assert.ok(streets.size < state.map.roads.length);
+  for (const side of [-1,1]) {
+    approach(3*side);
+    tick(sim, 1);
+    assert.equal(state.boost, 0);
+  }
+});
+
+test('a collected bolt gives the arcade acceleration, speed bonus and duration while respecting the brake', () => {
+  for (const braking of [false,true]) {
+    const events = [];
+    const {sim, state, bus, bolt, approach} = boostScenario({onEvent:e => events.push(e.type)});
+    approach();
+    driveUntil(sim, {accelerate:true}, () => state.boost > 0);
+    assert.equal(state.boost, 4.2);
+    assert.ok(bolt.respawnAt > state.time);
+    assert.equal(events.filter(type => type === 'boost').length, 1);
+    tick(sim, .5, {brake:braking});
+    if (braking) {
+      assert.ok(bus.speed < 25);
+      continue;
+    }
+    assert.ok(Math.abs(bus.speed*3.6-108) < .01, '36 km/h gained per second while coasting');
+    tick(sim, 3.6);
+    assert.ok(state.boost > 0 && Math.abs(bus.speed*3.6-129) < .01);
+    tick(sim, .2, {accelerate:true});
+    assert.equal(state.boost, 0);
+    assert.ok(bus.speed*3.6 > 100 && bus.speed*3.6 < 129, 'the boost wears off progressively');
+    tick(sim, .8, {accelerate:true});
+    assert.ok(Math.abs(bus.speed*3.6-90) < .01);
+    assert.equal(state.earnings, 0);
+  }
+});
+
+test('bolts draw a new 15–45 second cooldown per pickup and a parked bus must clear the bolt to collect again', () => {
+  const events = [];
+  let draw = .25;
+  const {sim, state, bus, bolt} = boostScenario({random:() => draw, onEvent:e => events.push(e.type)});
+  Object.assign(bus, {x:bolt.x, y:bolt.y, heading:bolt.heading, speed:0});
+  for (const value of [0,.5,.9999]) {
+    draw = value;
+    const previous = events.filter(type => type === 'boost').length;
+    sim.update(1/60);
+    assert.equal(events.filter(type => type === 'boost').length, previous + 1);
+    assert.ok(Math.abs(bolt.respawnAt-state.time-(15+30*value)) < 1e-8);
+    assert.ok(state.boosts.slice(1).every(other => !other.respawnAt));
+    tick(sim, bolt.respawnAt-state.time-.1);
+    assert.ok(bolt.respawnAt > state.time);
+    tick(sim, .2);
+    assert.equal(bolt.respawnAt, 0);
+    assert.equal(state.boost, 0, 'the visible bolt stays available underneath a parked bus');
+    assert.equal(events.filter(type => type === 'boost').length, previous + 1);
+    bus.y = bolt.y + 12;
+    sim.update(1/60);
+    bus.y = bolt.y;
+  }
 });
