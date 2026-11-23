@@ -37,7 +37,7 @@
   const hearts = window.BusHearts.create(health);
   const noticeStatus = $('notice-status');
   const noticeTitles = {cone: 'Oups !', barrier: 'Boum !', oil: 'Ça glisse !', pothole: 'Crevé !', rocket: 'Fusée !'};
-  const pendingNotices = [];
+  const notices = window.BusNotices.create(notice, noticeStatus);
   const gauges = Object.fromEntries(['score','distance','lap','speed'].map(key => [key, $(key)]));
   const lapNumber = new Intl.NumberFormat('fr-FR', {minimumIntegerDigits: 2});
   for (const dial of document.querySelectorAll('.reading number-flow')) {
@@ -246,42 +246,13 @@
     renderer.render(state);
     if (state.time - lastHud >= .16 || state.status === 'finished') { hud(state); lastHud = state.time; }
   }
-  function showNotice({type, message, points}) {
-    const card = document.createElement('div');
-    card.className = 'notice-card';
-    const headline = document.createElement('strong');
-    headline.className = 'notice-headline';
-    headline.textContent = points ? '+' + number.format(points) : noticeTitles[type];
-    if (points) {
-      const unit = document.createElement('small');
-      unit.textContent = 'pts';
-      headline.append(unit);
-    }
-    const caption = document.createElement('span');
-    caption.className = 'notice-caption';
-    caption.textContent = message;
-    card.append(headline, caption);
-    notice.dataset.type = type;
-    notice.replaceChildren(card);
-    noticeStatus.replaceChildren(points ? message + ' : +' + points + ' points' : noticeTitles[type] + ' ' + message);
-  }
-  notice.addEventListener('animationend', e => {
-    if (e.target !== notice.firstElementChild) return;
-    if (pendingNotices.length) showNotice(pendingNotices.shift());
-    else notice.replaceChildren();
-  });
-  function clearNotices() {
-    pendingNotices.length = 0;
-    notice.replaceChildren();
-    noticeStatus.replaceChildren();
-  }
-  function event(feedback, state) {
+  function event({type, message, points}, state) {
     hearts.set(state.health);
     // Refresh after the physics step has added all bonuses to the score.
     lastHud = -1;
-    if (feedback.type === 'dodge') return;
-    if (notice.firstElementChild) pendingNotices.push(feedback);
-    else showNotice(feedback);
+    if (type === 'dodge') return;
+    notices.push({type, message, title:points ? '+' + number.format(points) : noticeTitles[type],
+      unit:points ? 'pts' : '', announcement:points ? message + ' : +' + points + ' points' : noticeTitles[type] + ' ' + message});
   }
   function showRun(active) {
     delete cabinet.dataset.phase;
@@ -293,7 +264,7 @@
     if (active) hearts.set(3, false);
     $('pause').hidden = !active;
     $('touch-controls').hidden = !active;
-    clearNotices();
+    notices.clear();
     lastHud = -1;
   }
   function rendererReady() {
@@ -542,7 +513,7 @@
   function finish(state) {
     const firstResult = view !== 'finish';
     view = 'finish';
-    clearNotices();
+    notices.clear();
     $('touch-controls').hidden = true;
     $('pause').hidden = true;
     hud(state);
@@ -779,7 +750,7 @@
       return;
     }
     if (view === 'home') {
-      if (e.key === 'Enter' && !e.target.closest('button')) { e.preventDefault(); start(); }
+      if (e.key === 'Enter' && !e.target.closest('button, a')) { e.preventDefault(); start(); }
       return;
     }
     if (game.state.status !== 'running') return;

@@ -1,0 +1,204 @@
+.career-icons { position:absolute; width:0; height:0; overflow:hidden; }
+.career-app { --header-height:56px; }
+.career-header {
+  display:flex;
+  align-items:center;
+  gap:clamp(14px,2vw,26px);
+  height:var(--header-height);
+  padding:0 max(16px,3vw,env(safe-area-inset-left));
+  background:#201b2b;
+  border-bottom:1px solid var(--line);
+}
+.career-header a { color:inherit; text-decoration:none; }
+.career-home { display:inline-flex; align-items:center; height:100%; }
+.career-header a:focus-visible { outline:3px solid var(--yellow); outline-offset:4px; }
+.career-header .brand { display:inline-flex; padding:0; }
+.career-header .brand .wordmark { font-size:clamp(17px,3.7vw,24px); }
+.career-mode {
+  border-left:1px solid #54495b;
+  padding-left:clamp(14px,2vw,26px);
+  color:var(--green);
+  font-weight:700;
+}
+.career-nav-link, #driver-strip { margin-left:auto; display:flex; gap:9px; align-items:center; font-size:.9rem; }
+#driver-name { max-width:20ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#driver-avatar { display:block; border-radius:8px; background:var(--panel); object-fit:cover; }
+.career-tool {
+  display:grid;
+  place-items:center;
+  width:36px;
+  height:36px;
+  margin-left:4px;
+  border:1px solid #56485e;
+  border-radius:8px;
+  background:#332c3e;
+}
+.career-tool:hover { background:#473b51; }
+
+#service { display:flex; flex-direction:column; height:calc(var(--viewport) - var(--header-height)); }
+#city-stage { position:relative; flex:1; min-height:130px; isolation:isolate; overflow:hidden; background:#9dcdd0; }
+#city-view { display:block; width:100%; height:100%; touch-action:none; outline:none; }
+.stop-display, .network-button, .door-prompt { position:absolute; }
+.stop-display {
+  display:flex;
+  align-items:center;
+  gap:10px;
+  top:clamp(10px,2vw,24px);
+  left:clamp(10px,2vw,24px);
+  max-width:calc(100% - 180px);
+  padding:9px 14px 9px 9px;
+  background:#241f30ed;
+  color:var(--cream);
+  border:1px solid #ffffff35;
+  border-radius:12px;
+  box-shadow:0 3px 12px #18242f33;
+}
+#stop-number {
+  flex:none;
+  display:grid;
+  place-content:center;
+  min-width:38px;
+  height:38px;
+  background:var(--green);
+  color:#1e3534;
+  border-radius:7px;
+  font:1.1rem/1 var(--display);
+}
+.instrument-label { display:block; color:#cbc0ce; font-size:.67rem; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
+#stop-name { display:block; font:700 clamp(.9rem,1.6vw,1.18rem)/1.15 var(--sans); }
+#stop-distance { margin-left:3px; font-size:.8rem; color:#e1d2c0; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.network-button {
+  top:clamp(10px,2vw,24px);
+  right:clamp(10px,2vw,24px);
+  width:clamp(112px,14vw,180px);
+  padding:3px;
+  overflow:hidden;
+  border-radius:12px;
+  border:1px solid #ffffff45;
+  background:#241f30ef;
+  box-shadow:0 3px 12px #18242f33;
+}
+#mini-map { display:block; width:100%; height:auto; aspect-ratio:1.65; border-radius:9px; }
+.network-button>span { display:flex; align-items:center; justify-content:center; gap:4px; padding:5px 2px 3px; font-size:.73rem; font-weight:700; }
+.network-button .icon { color:var(--green); }
+.door-prompt {
+  left:50%;
+  bottom:clamp(10px,2vh,24px);
+  transform:translateX(-50%);
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:5px;
+  width:max-content;
+  max-width:96%;
+}
+#platform-status {
+  padding:3px 10px;
+  border-radius:6px;
+  background:#201c29e8;
+  color:#fff1d5;
+  font-size:.79rem;
+  font-weight:bold;
+  text-align:center;
+}
+.door-button {
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:9px;
+  min-height:40px;
+  padding:7px 12px;
+  border-radius:9px;
+  background:var(--yellow);
+  box-shadow:0 3px 0 #985f38;
+  color:#302536;
+  font-weight:700;
+}
+.door-button:disabled { background:#e7dfca; box-shadow:none; }
+.door-button kbd { min-width:19px; height:20px; border-color:#382a3e38; background:transparent; color:inherit; box-shadow:none; font-size:.7rem; }
+#fare-notice { inset:20% 8% auto; height:23%; }
+#fare-notice .notice-card { animation-duration:.85s; }
+#fare-notice .notice-headline { font-size:clamp(27px,4.5vw,48px); }
+#fare-notice .notice-caption { margin-top:5px; font-size:.78rem; }
+.instruments {
+  display:flex;
+  align-items:center;
+  gap:clamp(15px,3vw,55px);
+  padding:10px clamp(14px,3vw,52px);
+  border-top:2px solid #514652;
+  background:#272131;
+  font-variant-numeric:tabular-nums;
+}
+.instrument { display:flex; align-items:center; gap:10px; }
+.instrument>.icon { color:var(--lilac); width:25px; height:25px; }
+.instrument strong { display:block; font:clamp(17px,2vw,26px)/1.1 var(--display); }
+.instrument small { font:700 .68em var(--sans); }
+.instrument.fare strong,.instrument.fare>.icon { color:var(--green); }
+.district-indicator { display:flex; align-items:center; gap:8px; margin-left:auto; font-weight:700; font-size:.9rem; }
+.district-indicator i { width:9px; height:9px; border-radius:50%; background:var(--green); box-shadow:0 0 0 3px #83d8bd22; }
+.service-help { display:flex; justify-content:center; gap:clamp(10px,2vw,36px); padding:7px 10px; background:#201b29; color:#d7cddb; font-size:.74rem; }
+.service-help kbd { min-width:21px; height:19px; margin-right:3px; font-size:.73rem; }
+.career-touch { display:none; justify-content:space-between; gap:7px; padding:7px 12px max(7px,env(safe-area-inset-bottom)); background:#211d2a; touch-action:none; }
+.career-touch>div { display:flex; gap:8px; }
+.career-touch button {
+  min-width:52px;
+  min-height:44px;
+  padding:5px 12px;
+  border:1px solid #76697d;
+  border-radius:10px;
+  background:#42374b;
+  font-weight:bold;
+  touch-action:none;
+  user-select:none;
+  -webkit-user-select:none;
+}
+.career-touch [data-drive="accelerate"] { color:#16382d; background:var(--green); }
+.career-touch button.is-held { filter:brightness(1.3); transform:translateY(1px); }
+
+#service-menu { width:min(520px,calc(100% - 28px)); max-height:90dvh; color:var(--cream); }
+#service-menu.show-map { width:min(680px,calc(100% - 22px)); }
+.service-dialog-body { padding:clamp(16px,3vw,27px); }
+.service-dialog-body h2 { margin:0 0 12px; font:clamp(1.3rem,3.3vw,1.9rem)/1.1 var(--display); }
+#pause-details p { color:#d1c5d5; }
+#network-map { display:block; width:100%; height:clamp(130px,40vh,350px); border-radius:10px; background:#282738; }
+#stop-list { display:grid; grid-template-columns:1fr 1fr; gap:6px 12px; list-style:none; padding:0; margin:12px 0; }
+#stop-list li { display:flex; align-items:center; gap:7px; font-size:.82rem; }
+#stop-list .stop-index { display:grid; place-items:center; width:21px; height:21px; flex:none; border:1px solid #92889a; border-radius:50%; font-size:.7rem; font-weight:700; }
+#stop-list .requested .stop-index { color:#302536; border-color:var(--yellow); background:var(--yellow); }
+.service-menu-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:18px; }
+.service-menu-actions button { min-height:38px; padding:10px 13px; font-size:.86rem; }
+@media (pointer:coarse), (max-width:700px) {
+  .career-touch { display:flex; }
+  .service-help,.door-button kbd { display:none; }
+}
+@media (max-width:600px) {
+  .career-app { --header-height:46px; }
+  .career-header { padding-inline:12px; gap:10px; }
+  .career-mode { padding-left:10px; font-size:.8rem; }
+  #driver-name { max-width:9ch; font-size:.78rem; }
+  #driver-avatar { width:26px; height:26px; }
+  .career-tool { width:30px; height:30px; margin:0; }
+  .network-button { width:94px; }
+  .network-button .map-label-end { display:none; }
+  .stop-display { max-width:calc(100% - 120px); gap:6px; padding:6px; }
+  #stop-number { min-width:29px; height:33px; font-size:.9rem; }
+  #stop-distance { font-size:.7rem; }
+  .instrument-label { font-size:.55rem; }
+  .instruments { justify-content:space-around; padding:9px 8px; gap:8px; }
+  .instrument { gap:5px; }
+  .instrument>.icon { width:19px; height:19px; }
+  .district-indicator { display:none; }
+  #stop-list { gap:4px; }
+}
+@media (max-height:450px) and (orientation:landscape) {
+  .career-app { --header-height:36px; }
+  .career-touch { padding-block:4px; }
+  .career-touch button { min-height:35px; }
+  .instruments { padding-block:4px; }
+  .network-button { width:92px; }
+  .door-prompt { flex-direction:row; bottom:7px; }
+  .stop-display,.network-button { top:7px; }
+}
+@media (max-width:380px) {
+  #driver-name { display:none; }
+}
